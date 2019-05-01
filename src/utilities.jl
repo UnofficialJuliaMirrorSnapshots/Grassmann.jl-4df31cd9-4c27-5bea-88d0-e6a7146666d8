@@ -4,7 +4,9 @@
 
 import Base: @pure, print, show, getindex, setindex!, promote_rule, ==, convert, ndims
 import DirectSum: Bits, bit2int, doc2m, indexbits, indices
-import DirectSum: pre, alphanumv, alphanumw, vsn, subs, sups
+import DirectSum: pre, alphanumv, alphanumw, vsn, vio, subs, sups
+
+bcast(op,arg) = op ∈ (:(Reduce.Algebra.:+),:(Reduce.Algebra.:-)) ? Expr(:.,op,arg) : Expr(:call,op,arg.args...)
 
 @pure binomial_set(N) = SVector(Int[binomial(N,g) for g ∈ 0:N]...)
 @pure binomial(N,G) = Base.binomial(N,G)
