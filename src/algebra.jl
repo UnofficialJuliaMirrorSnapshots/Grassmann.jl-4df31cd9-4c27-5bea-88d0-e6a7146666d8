@@ -5,11 +5,27 @@
 import Base: +, -, *, ^, /, inv
 import AbstractLattices: ∧, ∨, dist
 import AbstractTensors: ⊗
-import DirectSum: dualcheck, tangent
+import DirectSum: dualcheck, tangent, hasinforigin, hasorigininf, hasi2o, haso2i
 export tangent
 
 const Field = Number
 const ExprField = Union{Expr,Symbol}
+
+## conformal masking >> transfer to DirectSum
+
+@pure conformalmask(V::T) where T<:VectorSpace = UInt(2)^(hasinf(V)+hasorigin(V))-1
+
+@pure function conformal_checker(V,A,B)
+    bt = conformalmask(V)
+    i2o,o2i = hasi2o(V,A,B),haso2i(V,A,B)
+    A&bt, B&bt, i2o, o2i, i2o ⊻ o2i
+end
+
+@pure g_one(b::Type{Basis{V}}) where V = getbasis(V,bits(b))
+@pure g_zero(V::VectorSpace) = 0*one(V)
+@pure g_one(V::VectorSpace) = Basis{V}()
+@pure g_one(::Type{T}) where T = one(T)
+@pure g_zero(::Type{T}) where T = zero(T)
 
 ## mutating operations
 
@@ -46,10 +62,19 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
         end
         for s ∈ (sm,sb)
             @eval begin
-                @inline function $(Symbol(:join,s))(V::VectorSpace{N,D},m::$M,A::Bits,B::Bits,v::S) where {N,D,T<:$F,S<:$F,M}
+                @inline function $(Symbol(:join,s))(V::VectorSpace{N,D},m::$M,A::Bits,B::Bits,v::S,::Grade{geo}=Grade{true}()) where {N,D,T<:$F,S<:$F,M,geo}
                     if v ≠ 0 && !dualcheck(V,A,B)
-                        val = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(A,B,V) ? $SUB(v) : v) : $MUL(parity_interior(A,B,V),v)
-                        $s(m,val,A ⊻ B,Dimension{N}())
+                        C,hio = A ⊻ B, geo && hasinforigin(V,A,B)
+                        cc = geo && (hio || hasorigininf(V,A,B))
+                        pcc,bas = if geo
+                            A3,B3,i2o,o2i,xor = conformal_checker(V,A,B)
+                            xor⊻i2o⊻(i2o&o2i), xor ? (A3|B3)⊻C : C
+                        else
+                            false, C
+                        end
+                        val = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(A,B,V)⊻pcc ? $SUB(v) : v) : $MUL(parity_interior(A,B,V),pcc ? $SUB(v) : v)
+                        $s(m,val,bas,Dimension{N}())
+                        cc && $s(m,hio ? $SUB(val) : val,conformalmask(V)⊻bas,Dimension{N}())
                     end
                     return m
                 end
@@ -89,9 +114,14 @@ end
 
 @pure function *(a::Basis{V},b::Basis{V}) where V
     A,B = bits(a), bits(b)
-    dualcheck(V,A,B) && (return zero(V))
-    d = Basis{V}(A⊻B)
-    return (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(a,b) ? SValue{V}(-1,d) : d) : SValue{V}(parity_interior(A,B,V),d)
+    dualcheck(V,A,B) && (return g_zero(V))
+    C,hio = A ⊻ B, hasinforigin(V,A,B)
+    cc = hio || hasorigininf(V,A,B)
+    A3,B3,i2o,o2i,xor = conformal_checker(V,A,B)
+    pcc = xor ⊻ i2o ⊻ (i2o & o2i)
+    d = Basis{V}(xor ? (A3|B3)⊻C : C)
+    out = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(a,b)⊻pcc ? SValue{V}(-1,d) : d) : SValue{V}((pcc ? -1 : 1)*parity_interior(A,B,V),d)
+    return cc ? (v=value(out);out+SValue{V}(hio ? -(v) : v,Basis{V}(conformalmask(V)⊻bits(d)))) : out
 end
 
 @pure function parity_calc(N,S,a,b)
@@ -129,7 +159,7 @@ export ∧, ∨
 
 @pure function ∧(a::Basis{V},b::Basis{V}) where V
     A,B = bits(a), bits(b)
-    (count_ones(A&B)>0) && (return zero(V))
+    (count_ones(A&B)>0) && (return g_zero(V))
     d = Basis{V}(A⊻B)
     return parity(a,b) ? SValue{V}(-1,d) : d
 end
@@ -137,7 +167,7 @@ end
 function ∧(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     x,y = basis(a), basis(b)
     A,B = bits(x), bits(y)
-    (count_ones(A&B)>0) && (return zero(V))
+    (count_ones(A&B)>0) && (return g_zero(V))
     v = value(a)*value(b)
     return SValue{V}(parity(x,y) ? -v : v,Basis{V}(A⊻B))
 end
@@ -147,9 +177,9 @@ end
 @inline ∧(a::UniformScaling{T},b::TensorAlgebra{V}) where {V,T<:Field} = V(a)∧b
 
 
-@inline exterior_product!(V::VectorSpace,out,α,β,γ) = (count_ones(α&β)==0) && joinaddmulti!(V,out,α,β,γ)
+@inline exterior_product!(V::VectorSpace,out,α,β,γ) = (count_ones(α&β)==0) && joinaddmulti!(V,out,α,β,γ,Grade{false}())
 
-@inline outer_product!(V::VectorSpace,out,α,β,γ) = (count_ones(α&β)==0) && joinaddblade!(V,out,α,β,γ)
+@inline outer_product!(V::VectorSpace,out,α,β,γ) = (count_ones(α&β)==0) && joinaddblade!(V,out,α,β,γ,Grade{false}())
 
 #∧(a::MultiGrade{V},b::Basis{V}) where V = MultiGrade{V}(a.v,basis(a)*b)
 #∧(a::Basis{V},b::MultiGrade{V}) where V = MultiGrade{V}(b.v,a*basis(b))
@@ -159,7 +189,7 @@ end
 
 export complementleft, complementright
 
-@pure complement(N::Int,B::UInt,D::Int=0) = ((~B)&(one(Bits)<<(N-D)-1))|(B&((one(Bits)<<D-1)<<(N-D)))
+@pure complement(N::Int,B::UInt,D::Int=0)::UInt = ((~B)&(one(Bits)<<(N-D)-1))|(B&((one(Bits)<<D-1)<<(N-D)))
 
 @pure parityright(V::Bits,B::Bits) = parityright(count_ones(V&B),sum(indices(B)),count_ones(B))
 
@@ -184,7 +214,7 @@ for side ∈ (:left,:right)
         end
     end
     for Value ∈ MSV
-        @eval $c(b::$Value) = value(b) ≠ 0 ? value(b) * $c(basis(b)) : zero(vectorspace(b))
+        @eval $c(b::$Value) = value(b) ≠ 0 ? value(b) * $c(basis(b)) : g_zero(vectorspace(b))
     end
 end
 
@@ -204,7 +234,7 @@ for r ∈ (:reverse,:involute,:conj)
     p = Symbol(:parity,r)
     @eval @pure $r(b::Basis{V,G,B}) where {V,G,B} =$p(G) ? SValue{V}(-value(b),b) : b
     for Value ∈ MSV
-        @eval $r(b::$Value) = value(b) ≠ 0 ? value(b) * $r(basis(b)) : zero(vectorspace(b))
+        @eval $r(b::$Value) = value(b) ≠ 0 ? value(b) * $r(basis(b)) : g_zero(vectorspace(b))
     end
 end
 
@@ -221,14 +251,14 @@ export ⋅
 
 @pure function dot(a::Basis{V},b::Basis{V}) where V
     g,C,t = interior(a,b)
-    !t && (return zero(V))
+    !t && (return g_zero(V))
     d = Basis{V}(C)
     return typeof(V) <: Signature ? (g ? SValue{V}(-1,d) : d) : SValue{V}(g,d)
 end
 
 function dot(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     g,C,t = interior(bits(basis(a)),bits(basis(b)),V)
-    !t && (return zero(V))
+    !t && (return g_zero(V))
     v = value(a)*value(b)
     return SValue{V}(typeof(V) <: Signature ? (g ? -v : v) : g*v,Basis{V}(C))
 end
@@ -236,13 +266,14 @@ end
 @pure function interior_calc(V::Signature{N,M,S},A,B) where {N,M,S}
     dualcheck(V,A,B) && (return false,zero(Bits),false)
     γ = complement(N,B)
-    p,C,t = regressive_calc(V,A,γ,true)
+    p,C,t = regressive_calc(V,A,γ,Grade{true}())
     return t ? p⊻parityright(S,B) : p, C, t
 end
 
 @pure function interior_calc(V::DiagonalForm{N,M,S},A,B) where {N,M,S}
+    dualcheck(V,A,B) && (return false,zero(Bits),false)
     γ = complement(N,B)
-    p,C,t = regressive_calc(Signature(V),A,γ,true)
+    p,C,t = regressive_calc(Signature(V),A,γ,Grade{true}())
     ind = indices(B)
     g = prod(V[ind])
     return t ? (p⊻parityright(0,sum(ind),count_ones(B)) ? -(g) : g) : g, C, t
@@ -252,14 +283,14 @@ end
 
 @pure function ∨(a::Basis{V},b::Basis{V}) where V
     p,C,t = regressive(a,b)
-    !t && (return zero(V))
+    !t && (return g_zero(V))
     d = Basis{V}(C)
     return p ? SValue{V}(-1,d) : d
 end
 
 function ∨(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     p,C,t = regressive(bits(basis(a)),bits(basis(b)),V)
-    !t && (return zero(V))
+    !t && (return g_zero(V))
     v = value(a)*value(b)
     return SValue{V}(p ? -v : v,Basis{V}(C))
 end
@@ -268,16 +299,22 @@ end
 @inline ∨(a::TensorAlgebra{V},b::UniformScaling{T}) where {V,T<:Field} = a∨V(b)
 @inline ∨(a::UniformScaling{T},b::TensorAlgebra{V}) where {V,T<:Field} = V(a)∨b
 
-@pure function regressive_calc(V::Signature{N,M,S},A,B,opt=false) where {N,M,S}
+@pure function regressive_calc(V::Signature{N,M,S},A,B,::Grade{skew}=Grade{false}()) where {N,M,S,skew}
     α,β = complement(N,A),complement(N,B)
-    if (count_ones(α&β)==0) && !dualcheck(V,α,β)
-        C = α ⊻ β
-        L = count_ones(A)+count_ones(B)
-        pa,pb,pc = parityright(S,A),parityright(S,B),parityright(S,C)
-        bas = opt ? complement(N,C) : A+B≠0 ? complement(N,C) : zero(Bits)
-        return isodd(L*(L-N))⊻pa⊻pb⊻parity(N,S,α,β)⊻pc, bas, true
+    cc = skew && (hasinforigin(V,A,β) || hasorigininf(V,A,β))
+    if ((count_ones(α&β)==0) && !dualcheck(V,α,β)) || cc
+        C,L = α ⊻ β, count_ones(A)+count_ones(B)
+        pcc,bas = if skew
+            A3,β3,i2o,o2i,xor = conformal_checker(V,A,β)
+            cx,bas = cc || xor, complement(N,C)
+            cx && parity(A3,β3,V)⊻(i2o || o2i)⊻(xor&!i2o), cx ? (A3|β3)⊻bas : bas
+        else
+            false, A+B≠0 ? complement(N,C) : g_zero(UInt)
+        end
+        par = parityright(S,A)⊻parityright(S,B)⊻parityright(S,C)
+        return (isodd(L*(L-N))⊻par⊻parity(N,S,α,β)⊻pcc)::Bool, bas, true
     else
-        return false, zero(Bits), false
+        return false, g_zero(UInt), false
     end
 end
 
@@ -528,7 +565,7 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
                 return mv
             end
             function dot(a::Basis{V,G},b::$Blade{T,V,G}) where {V,T<:$Field,G}
-                $(insert_expr((:N,:t,:ib),VEC)...)
+                $(insert_expr((:N,:t,:mv,:ib),VEC)...)
                 for i ∈ 1:binomial(N,G)
                     @inbounds inner_product!(mv,bits(a),ib[i],b[i])
                 end
@@ -652,7 +689,7 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
             function $c(m::MultiVector{T,V}) where {T<:$Field,V}
                 dualtype(V)<0 && throw(error("Complement for mixed tensors is undefined"))
                 $(insert_expr((:N,:bs,:bn),VEC)...)
-                out = zeros(mvec(N,T))
+                out = zeros($VEC(N,T))
                 for g ∈ 1:N+1
                     ib = indexbasis(N,g-1)
                     @inbounds for i ∈ 1:bn[g]
@@ -686,7 +723,7 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
         @eval begin
             function $reverse(m::MultiVector{T,V}) where {T<:$Field,V}
                 $(insert_expr((:N,:bs,:bn),VEC)...)
-                out = zeros(mvec(N,T))
+                out = zeros($VEC(N,T))
                 for g ∈ 1:N+1
                     pg = $p(g-1)
                     ib = indexbasis(N,g-1)
@@ -959,7 +996,7 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
             function $op(a::MultiVector{T,V},b::MultiVector{S,V}) where {T<:$Field,V,S<:$Field}
                 $(insert_expr((:N,:t),VEC)...)
                 out = copy(value(a,$VEC(N,t)))
-                $(add_val(eop,:out,:(value(b,mvec(N,t))),bop))
+                $(add_val(eop,:out,:(value(b,$VEC(N,t))),bop))
                 return MultiVector{t,V}(out)
             end
         end
@@ -971,7 +1008,7 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
                     @inbounds out[r+1:r+bng] = value(a,MVector{bng,t})
                     rb = binomsum(N,L)
                     Rb = binomial(N,L)
-                    @inbounds out[rb+1:rb+Rb] = $(bcast(bop,:(value(b,MVector{Rb,t}),)))
+                    @inbounds out[rb+1:rb+Rb] = $(bcast(bop,:(value(b,$VEC(N,L,t)),)))
                     return MultiVector{t,V}(out)
                 end
             end
@@ -1001,13 +1038,13 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
                     end
                     function $op(a::$Blade{T,V,G},b::$Value{V,L,B,S} where B) where {T<:$Field,V,G,L,S<:$Field}
                         $(insert_expr((:N,:t,:out,:r,:bng),VEC)...)
-                        @inbounds out[r+1:r+bng] = value(a,MVector{bng,t})
+                        @inbounds out[r+1:r+bng] = value(a,$VEC(N,G,t))
                         addmulti!(out,$bop(value(b,t)),bits(basis(b)),Dimension{N}())
                         return MultiVector{t,V}(out)
                     end
                     function $op(a::$Value{V,L,A,S} where A,b::$Blade{T,V,G}) where {T<:$Field,V,G,L,S<:$Field}
                         $(insert_expr((:N,:t,:out,:r,:bng),VEC)...)
-                        @inbounds out[r+1:r+bng] = $(bcast(bop,:(value(b,MVector{bng,t}),)))
+                        @inbounds out[r+1:r+bng] = $(bcast(bop,:(value(b,$VEC(N,G,t)),)))
                         addmulti!(out,value(a,t),bits(basis(a)),Dimension{N}())
                         return MultiVector{t,V}(out)
                     end
@@ -1029,26 +1066,26 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
                 end
                 function $op(a::$Blade{T,V,G},b::Basis{V,L}) where {T<:$Field,V,G,L}
                     $(insert_expr((:N,:t,:out,:r,:bng),VEC)...)
-                    @inbounds out[r+1:r+bng] = value(a,MVector{bng,t})
+                    @inbounds out[r+1:r+bng] = value(a,$VEC(N,G,t))
                     addmulti!(out,$bop(value(b,t)),bits(basis(b)),Dimension{N}())
                     return MultiVector{t,V}(out)
                 end
                 function $op(a::Basis{V,L},b::$Blade{T,V,G}) where {T<:$Field,V,G,L}
                     $(insert_expr((:N,:t,:out,:r,:bng),VEC)...)
-                    @inbounds out[r+1:r+bng] = $(bcast(bop,:(value(b,MVector{bng,t}),)))
+                    @inbounds out[r+1:r+bng] = $(bcast(bop,:(value(b,$VEC(N,G,t)),)))
                     addmulti!(out,value(a,t),bits(basis(a)),Dimension{N}())
                     return MultiVector{t,V}(out)
                 end
                 function $op(a::$Blade{T,V,G},b::MultiVector{S,V}) where {T<:$Field,V,G,S}
                     $(insert_expr((:N,:t,:r,:bng),VEC)...)
                     out = $(bcast(bop,:(value(b,$VEC(N,t)),)))
-                    @inbounds out[r+1:r+bng] += value(b,MVector{bng,t})
+                    @inbounds out[r+1:r+bng] += value(a,$VEC(N,G,t))
                     return MultiVector{t,V}(out)
                 end
                 function $op(a::MultiVector{T,V},b::$Blade{S,V,G}) where {T<:$Field,V,G,S}
                     $(insert_expr((:N,:t,:r,:bng),VEC)...)
                     out = copy(value(a,$VEC(N,t)))
-                    @inbounds $(Expr(eop,:(out[r+1:r+bng]),:(value(b,MVector{bng,t}))))
+                    @inbounds $(Expr(eop,:(out[r+1:r+bng]),:(value(b,$VEC(N,G,t)))))
                     return MultiVector{t,V}(out)
                 end
             end
