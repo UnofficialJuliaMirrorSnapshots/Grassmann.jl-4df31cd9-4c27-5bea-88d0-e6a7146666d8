@@ -55,10 +55,10 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
                 end
                 @inline function $(Symbol(:geom,s))(V::W,m::$M,A::Bits,B::Bits,v::S) where W<:VectorSpace{N,D} where {N,D,T<:$F,S<:$F,M}
                     if v ≠ 0 && !dualcheck(V,A,B)
-                        pcc,bas,cc = (hasinf(V) && hasorigin(V)) ? conformal(V,A,B) : false,A⊻B,false
+                        pcc,bas,cc = (hasinf(V) && hasorigin(V)) ? conformal(A,B,V) : (false,A⊻B,false)
                         val = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(A,B,V)⊻pcc ? $SUB(v) : v) : $MUL(parityinner(A,B,V),pcc ? $SUB(v) : v)
                         $s(m,val,bas,Dimension{N}())
-                        cc && $s(m,hio ? $SUB(val) : val,conformalmask(V)⊻bas,Dimension{N}())
+                        cc && $s(m,DirectSum.hasinforigin(V,A,B) ? $SUB(val) : val,conformalmask(V)⊻bas,Dimension{N}())
                     end
                     return m
                 end
@@ -145,10 +145,10 @@ reverse(a::UniformScaling{T}) where T<:Field = UniformScaling(-a.λ)
 @pure function *(a::Basis{V},b::Basis{V}) where V
     A,B = bits(a), bits(b)
     dualcheck(V,A,B) && (return g_zero(V))
-    pcc,bas,cc = (hasinf(V) && hasorigin(V)) ? conformal(V,A,B) : false,A⊻B,false
+    pcc,bas,cc = (hasinf(V) && hasorigin(V)) ? conformal(A,B,V) : (false,A⊻B,false)
     d = Basis{V}(bas)
     out = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(a,b)⊻pcc ? SValue{V}(-1,d) : d) : SValue{V}((pcc ? -1 : 1)*parityinner(A,B,V),d)
-    return cc ? (v=value(out);out+SValue{V}(hio ? -(v) : v,Basis{V}(conformalmask(V)⊻bits(d)))) : out
+    return cc ? (v=value(out);out+SValue{V}(hasinforigin(V,A,B) ? -(v) : v,Basis{V}(conformalmask(V)⊻bits(d)))) : out
 end
 
 for Value ∈ MSV
