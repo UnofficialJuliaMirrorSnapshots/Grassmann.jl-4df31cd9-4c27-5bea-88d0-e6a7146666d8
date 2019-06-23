@@ -2,9 +2,9 @@
 #   This file is part of Grassmann.jl. It is licensed under the GPL license
 #   Grassmann Copyright (C) 2019 Michael Reed
 
-import Base: +, -, *, ^, /, inv
+import Base: +, -, *, ^, /, inv, <, >, <<, >>, >>>
 import AbstractLattices: ∧, ∨, dist
-import AbstractTensors: ⊗
+import AbstractTensors: ⊗, ⊛, ⊙, ⊠, ⨼, ⨽, ⋆
 import DirectSum: dualcheck, tangent, hasinforigin, hasorigininf
 export tangent
 
@@ -58,7 +58,7 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
                         pcc,bas,cc = (hasinf(V) && hasorigin(V)) ? conformal(A,B,V) : (false,A⊻B,false)
                         val = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(A,B,V)⊻pcc ? $SUB(v) : v) : $MUL(parityinner(A,B,V),pcc ? $SUB(v) : v)
                         $s(m,val,bas,Dimension{N}())
-                        cc && $s(m,DirectSum.hasinforigin(V,A,B) ? $SUB(val) : val,conformalmask(V)⊻bas,Dimension{N}())
+                        cc && $s(m,hasinforigin(V,A,B) ? $SUB(val) : val,conformalmask(V)⊻bas,Dimension{N}())
                     end
                     return m
                 end
@@ -100,6 +100,10 @@ end
     return out
 end
 
+# Hodge star ★
+
+const complementright = ⋆
+
 ## complement
 
 export complementleft, complementright, ⋆
@@ -116,10 +120,6 @@ for side ∈ (:left,:right)
         @eval $c(b::$Value) = value(b)≠0 ? value(b)*$c(basis(b)) : g_zero(vectorspace(b))
     end
 end
-
-# Hodge star ★
-
-const ⋆ = complementright
 
 ## reverse
 
@@ -177,7 +177,7 @@ end
 
 ## exterior product
 
-export ∧, ∨
+export ∧, ∨, ⊗
 
 @pure function ∧(a::Basis{V},b::Basis{V}) where V
     A,B = bits(a), bits(b)
@@ -201,6 +201,10 @@ end
 @inline ∧(a::TensorAlgebra{V},b::UniformScaling{T}) where {V,T<:Field} = a∧V(b)
 @inline ∧(a::UniformScaling{T},b::TensorAlgebra{V}) where {V,T<:Field} = V(a)∧b
 
+for op ∈ (:⊗,:^)
+    @eval $op(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a∧b
+end
+
 ## regressive product: (L = grade(a) + grade(b); (-1)^(L*(L-ndims(V)))*⋆(⋆(a)∧⋆(b)))
 
 @pure function ∨(a::Basis{V},b::Basis{V}) where V
@@ -221,6 +225,8 @@ end
 @inline ∨(a::TensorAlgebra{V},b::UniformScaling{T}) where {V,T<:Field} = a∨V(b)
 @inline ∨(a::UniformScaling{T},b::TensorAlgebra{V}) where {V,T<:Field} = V(a)∨b
 
+Base.:&(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a∨b
+
 ## interior product: a ∨ ⋆(b)
 
 import LinearAlgebra: dot, ⋅
@@ -239,6 +245,12 @@ function dot(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     v = value(a)*value(b)
     return SValue{V}(typeof(V) <: Signature ? (g ? -v : v) : g*v,Basis{V}(C))
 end
+
+export ⨼, ⨽
+
+⨼(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = ⋆(a)∨b
+<(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = ⋆(a)∨b
+>(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = dot(a,b)
 
 ## cross product
 
@@ -261,15 +273,32 @@ function cross(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     return SValue{V}(p ? -v : v,Basis{V}(C))
 end
 
-## commutator product
+# symmetrization and anti-symmetrization
 
-export ⨲
+export ⊙, ⊠
 
-⨲(a,b) = a*b - b*a
+⊙(x::TensorAlgebra...) = (K=length(x); sum([prod(x[k]) for k ∈ collect(permutations(1:K))])/factorial(K))
+
+function ⊠(x::TensorAlgebra...)
+    K,V,out = length(x),∪(vectorspace.(x)...),prod(x)
+    P,F = collect(permutations(1:K)),factorial(K)
+    for n ∈ 2:F
+        p = prod(x[P[n]])
+        DirectSum.indexparity!(P[n],V)[1] ? (out-=p) : (out+=p)
+    end
+    return out/F
+end
+
+<<(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a⊙b
+>>(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a⊠b
+
+## sandwich product
+
+>>>(x::TensorAlgebra{V},y::TensorAlgebra{V}) where V = x * y * ~x
 
 ### Product Algebra Constructor
 
-function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CONJ=:conj)
+function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj)
     if Field == Grassmann.Field
         declare_mutating_operations(:(MArray{Tuple{M},T,1,M}),Field,Expr,:-,:*)
     elseif Field ∈ (SymField,:(SymPy.Sym))
@@ -305,8 +334,8 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
         end
         *(a::F,b::Basis{V}) where {F<:$EF,V} = SValue{V}(a,b)
         *(a::Basis{V},b::F) where {F<:$EF,V} = SValue{V}(b,a)
-        *(a::F,b::MultiVector{T,V}) where {F<:$EF,T<:$EF,V} = MultiVector{promote_type(T,F),V}(broadcast($MUL,a,b.v))
-        *(a::MultiVector{T,V},b::F) where {F<:$EF,T<:$EF,V} = MultiVector{promote_type(T,F),V}(broadcast($MUL,a.v,b))
+        *(a::F,b::MultiVector{T,V}) where {F<:$Field,T<:$Field,V} = MultiVector{promote_type(T,F),V}(broadcast($MUL,a,b.v))
+        *(a::MultiVector{T,V},b::F) where {F<:$Field,T<:$Field,V} = MultiVector{promote_type(T,F),V}(broadcast($MUL,a.v,b))
         *(a::F,b::MultiGrade{V}) where {F<:$EF,V} = MultiGrade{V}(broadcast($MUL,a,b.v))
         *(a::MultiGrade{V},b::F) where {F<:$EF,V} = MultiGrade{V}(broadcast($MUL,a.v,b))
         ∧(a::$Field,b::$Field) = $MUL(a,b)
@@ -878,7 +907,7 @@ function generate_product_algebra(Field=Field,MUL=:*,ADD=:+,SUB=:-,VEC=:mvec,CON
 end
 
 generate_product_algebra()
-generate_product_algebra(SymField,:($Sym.:*),:($Sym.:+),:($Sym.:-),:svec,:($Sym.conj))
+generate_product_algebra(SymField,:svec,:($Sym.:*),:($Sym.:+),:($Sym.:-),:($Sym.conj))
 
 const NSE = Union{Symbol,Expr,<:Number}
 
@@ -939,12 +968,20 @@ end
 
 @pure inv(b::Basis) = parityreverse(grade(b)) ? -1*b : b
 for Value ∈ MSV
-    @eval function inv(b::$Value{V,G,B,T}) where {V,G,B,T}
-        $Value{V,G,B}((parityreverse(G) ? -one(T) : one(T))/value(b))
+    @eval begin
+        function inv(b::$Value{V,G,B,T}) where {V,G,B,T}
+            $Value{V,G,B}((parityreverse(G) ? -one(T) : one(T))/value(b))
+        end
+        rem(b::$Value{V,G,B,T},m) where {V,G,B,T} = $Value{V,G,B}(rem(value(b),m))
+        div(b::$Value{V,G,B,T},m) where {V,G,B,T} = $Value{V,G,B}(div(value(b),m))
     end
 end
 for Blade ∈ MSB
-    @eval inv(a::$Blade) = (A=~a; A/(A⋅a))
+    @eval begin
+        inv(a::$Blade) = (A=~a; A/(A⋅a))
+        rem(a::$Blade{T,V,G},m) where {T,V,G} = $Blade{T,V,G}(rem.(value(a),m))
+        div(a::$Blade{T,V,G},m) where {T,V,G} = $Blade{T,V,G}(div.(value(a),m))
+    end
 end
 for Term ∈ (:TensorTerm,MSB...,:MultiVector,:MultiGrade)
     @eval begin
@@ -953,6 +990,8 @@ for Term ∈ (:TensorTerm,MSB...,:MultiVector,:MultiGrade)
         @pure /(a::$Term,b::UniformScaling) = a*inv(vectorspace(a)(b))
     end
 end
+rem(a::MultiVector{T,V},m) where {T,V} = MultiVector{T,V}(rem.(value(a),m))
+div(a::MultiVector{T,V},m) where {T,V} = MultiVector{T,V}(div.(value(a),m))
 
 ## exponential & logarithm function
 
