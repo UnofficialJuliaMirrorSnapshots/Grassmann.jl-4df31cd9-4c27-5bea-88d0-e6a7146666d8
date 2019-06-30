@@ -2,9 +2,9 @@
 #   This file is part of Grassmann.jl. It is licensed under the GPL license
 #   Grassmann Copyright (C) 2019 Michael Reed
 
-import Base: +, -, *, ^, /, inv, <, >, <<, >>, >>>
+import Base: +, -, *, ^, /, //, inv, <, >, <<, >>, >>>
 import AbstractLattices: ∧, ∨, dist
-import AbstractTensors: ⊗, ⊛, ⊙, ⊠, ⨼, ⨽, ⋆
+import AbstractTensors: ⊗, ⊛, ⊙, ⊠, ⨼, ⨽, ⋆, rem, div, contraction
 import DirectSum: dualcheck, tangent, hasinforigin, hasorigininf
 export tangent
 
@@ -175,6 +175,8 @@ for Blade ∈ MSB
     end
 end
 
+export ⊛
+
 ## exterior product
 
 export ∧, ∨, ⊗
@@ -201,9 +203,7 @@ end
 @inline ∧(a::TensorAlgebra{V},b::UniformScaling{T}) where {V,T<:Field} = a∧V(b)
 @inline ∧(a::UniformScaling{T},b::TensorAlgebra{V}) where {V,T<:Field} = V(a)∧b
 
-for op ∈ (:⊗,:^)
-    @eval $op(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a∧b
-end
+⊗(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a∧b
 
 ## regressive product: (L = grade(a) + grade(b); (-1)^(L*(L-ndims(V)))*⋆(⋆(a)∧⋆(b)))
 
@@ -232,14 +232,14 @@ Base.:&(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = a∨b
 import LinearAlgebra: dot, ⋅
 export ⋅
 
-@pure function dot(a::Basis{V},b::Basis{V}) where V
+@pure function contraction(a::Basis{V},b::Basis{V}) where V
     g,C,t = interior(a,b)
     !t && (return g_zero(V))
     d = Basis{V}(C)
     return typeof(V) <: Signature ? (g ? SValue{V}(-1,d) : d) : SValue{V}(g,d)
 end
 
-function dot(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
+function contraction(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     g,C,t = interior(bits(basis(a)),bits(basis(b)),V)
     !t && (return g_zero(V))
     v = value(a)*value(b)
@@ -248,9 +248,15 @@ end
 
 export ⨼, ⨽
 
-⨼(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = ⋆(a)∨b
-<(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = ⋆(a)∨b
->(a::TensorAlgebra{V},b::TensorAlgebra{V}) where V = dot(a,b)
+for T ∈ (:TensorTerm,MSB...)
+    @eval @inline Base.abs2(t::T) where T<:$T = contraction(t,t)
+end
+
+@inline dot(a::A,b::B) where {A<:TensorAlgebra{V},B<:TensorAlgebra{V}} where V = contraction(a,b)
+
+#=for A ∈ (:TensorTerm,MSB...), B ∈ (:TensorTerm,MSB...)
+    @eval contraction(a::A,b::B) where {A<:$A,B<:$B} where V = contraction(a,b)
+end=#
 
 ## cross product
 
@@ -378,14 +384,14 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
             *(a::$Blade{T,V,G},b::F) where {F<:$Field,T<:$Field,V,G} = SBlade{promote_type(T,F),V,G}(broadcast($MUL,a.v,b))
             #∧(a::$Field,b::$Blade{T,V,G}) where {T<:$Field,V,G} = SBlade{T,V,G}(a.*b.v)
             #∧(a::$Blade{T,V,G},b::$Field) where {T<:$Field,V,G} = SBlade{T,V,G}(a.v.*b)
-            function dot(a::$Blade{T,V,G},b::Basis{V,G}) where {T<:$Field,V,G}
+            function contraction(a::$Blade{T,V,G},b::Basis{V,G}) where {T<:$Field,V,G}
                 $(insert_expr((:N,:t,:mv,:ib),VEC)...)
                 for i ∈ 1:binomial(N,G)
                     @inbounds inneraddvalue!(mv,ib[i],bits(b),a[i])
                 end
                 return mv
             end
-            function dot(a::Basis{V,G},b::$Blade{T,V,G}) where {V,T<:$Field,G}
+            function contraction(a::Basis{V,G},b::$Blade{T,V,G}) where {V,T<:$Field,G}
                 $(insert_expr((:N,:t,:mv,:ib),VEC)...)
                 for i ∈ 1:binomial(N,G)
                     @inbounds inneraddvalue!(mv,bits(a),ib[i],b[i])
@@ -417,14 +423,14 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
         end
         for Value ∈ MSV
             @eval begin
-                function dot(a::$Blade{T,V,G},b::$Value{V,G,B,S}) where {T<:$Field,V,G,B,S<:$Field}
+                function contraction(a::$Blade{T,V,G},b::$Value{V,G,B,S}) where {T<:$Field,V,G,B,S<:$Field}
                     $(insert_expr((:N,:t,:mv,:ib),VEC)...)
                     for i ∈ 1:binomial(N,G)
                         @inbounds inneraddvalue!(mv,ib[i],bits(basis(b)),$MUL(a[i],b.v))
                     end
                     return mv
                 end
-                function dot(a::$Value{V,G,B,S},b::$Blade{T,V,G}) where {T<:$Field,V,G,B,S<:$Field}
+                function contraction(a::$Value{V,G,B,S},b::$Blade{T,V,G}) where {T<:$Field,V,G,B,S<:$Field}
                     $(insert_expr((:N,:t,:mv,:ib),VEC)...)
                     for i ∈ 1:binomial(N,G)
                         @inbounds inneraddvalue!(mv,bits(basis(a)),ib[i],$MUL(a.v,b[i]))
@@ -458,7 +464,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
     end
     for Blade ∈ MSB, Other ∈ MSB
         @eval begin
-            function dot(a::$Blade{T,V,G},b::$Other{S,V,G}) where {T<:$Field,V,G,S<:$Field}
+            function contraction(a::$Blade{T,V,G},b::$Other{S,V,G}) where {T<:$Field,V,G,S<:$Field}
                 $(insert_expr((:N,:t,:mv,:bng,:ib),VEC)...)
                 for i ∈ 1:bng
                     @inbounds v,ibi = a[i],ib[i]
@@ -562,7 +568,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
     end
 
     for (op,product!) ∈ ((:∧,:exteraddmulti!),(:*,:geomaddmulti!),
-                         (:∨,:meetaddmulti!),(:dot,:skewaddmulti!),
+                         (:∨,:meetaddmulti!),(:contraction,:skewaddmulti!),
                          (:cross,:crossaddmulti!))
         @eval begin
             function $op(a::MultiVector{T,V},b::Basis{V,G}) where {T<:$Field,V,G}
@@ -966,73 +972,65 @@ end
 
 ## division
 
-@pure inv(b::Basis) = parityreverse(grade(b)) ? -1*b : b
-for Value ∈ MSV
+for (nv,d) ∈ ((:inv,:/),(:inv_rat,://))
     @eval begin
-        function inv(b::$Value{V,G,B,T}) where {V,G,B,T}
-            $Value{V,G,B}((parityreverse(G) ? -one(T) : one(T))/value(b))
+        @pure $nv(b::Basis{V,G}) where {V,G}=$d(parityreverse(G) ? -1 : 1,value(b⋅b))*b
+        @pure $d(a,b::T) where T<:TensorAlgebra = a*$nv(b)
+        function $nv(m::MultiVector{T,V}) where {T,V}
+            rm = ~m
+            d = rm*m
+            fd = norm(d)
+            for k ∈ 0:ndims(V)
+                dk = d(k)
+                norm(dk) ≈ fd && (return $d(rm,dk))
+            end
+            throw(error("inv($m) is undefined"))
         end
-        rem(b::$Value{V,G,B,T},m) where {V,G,B,T} = $Value{V,G,B}(rem(value(b),m))
-        div(b::$Value{V,G,B,T},m) where {V,G,B,T} = $Value{V,G,B}(div(value(b),m))
     end
+    for Value ∈ MSV
+        @eval $nv(b::$Value{V,G,B,T}) where {V,G,B,T} = $Value{V,G,B}($d(parityreverse(G) ? -one(T) : one(T),value(abs2(B))*value(b)))
+    end
+    for Blade ∈ MSB
+        @eval $nv(a::$Blade) = $d(~a,value(abs2(a)))
+    end
+    for Term ∈ (:TensorTerm,MSB...,:MultiVector,:MultiGrade)
+        @eval begin
+            @pure $d(a::S,b::T) where {S<:$Term,T<:Number} = a*$d(1,b)
+            @pure $d(a::S,b::UniformScaling) where S<:$Term = a*$nv(vectorspace(a)(b))
+        end
+    end
+end
+
+for op ∈ (:div,:rem,:mod,:mod1,:fld,:fld1,:cld,:ldexp)
+    for Value ∈ MSV
+        @eval Base.$op(b::$Value{V,G,B,T},m) where {V,G,B,T} = $Value{V,G,B}($op(value(b),m))
+    end
+    for Blade ∈ MSB
+        @eval Base.$op(a::$Blade{T,V,G},m) where {T,V,G} = $Blade{T,V,G}($op.(value(a),m))
+    end
+    @eval begin
+        Base.$op(a::Basis{V,G},m) where {V,G} = Basis{V,G}($op(value(a),m))
+        Base.$op(a::MultiVector{T,V},m) where {T,V} = MultiVector{T,V}($op.(value(a),m))
+    end
+end
+for op ∈ (:mod2pi,:rem2pi,:rad2deg,:deg2rad)
+    for Value ∈ MSV
+        @eval Base.$op(b::$Value{V,G,B,T}) where {V,G,B,T} = $Value{V,G,B}($op(value(b)))
+    end
+    for Blade ∈ MSB
+        @eval Base.$op(a::$Blade{T,V,G}) where {T,V,G} = $Blade{T,V,G}($op.(value(a)))
+    end
+    @eval begin
+        Base.$op(a::Basis{V,G}) where {V,G} = Basis{V,G}($op(value(a)))
+        Base.$op(a::MultiVector{T,V}) where {T,V} = MultiVector{T,V}($op.(value(a)))
+    end
+end
+for Value ∈ MSV
+    @eval Base.rationalize(t::Type,b::$Value{V,G,B,T};tol::Real=eps(T)) where {V,G,B,T} = $Value{V,G,B}(rationalize(t,value(b),tol))
 end
 for Blade ∈ MSB
-    @eval begin
-        inv(a::$Blade) = (A=~a; A/(A⋅a))
-        rem(a::$Blade{T,V,G},m) where {T,V,G} = $Blade{T,V,G}(rem.(value(a),m))
-        div(a::$Blade{T,V,G},m) where {T,V,G} = $Blade{T,V,G}(div.(value(a),m))
-    end
+    @eval Base.rationalize(t::Type,a::$Blade{T,V,G};tol::Real=eps(T)) where {T,V,G} = $Blade{T,V,G}(rationalize.(t,value(a),tol))
 end
-for Term ∈ (:TensorTerm,MSB...,:MultiVector,:MultiGrade)
-    @eval begin
-        @pure /(a::$Term,b::TensorTerm) = a*inv(b)
-        @pure /(a::$Term,b::Number) = a*inv(b)
-        @pure /(a::$Term,b::UniformScaling) = a*inv(vectorspace(a)(b))
-    end
-end
-rem(a::MultiVector{T,V},m) where {T,V} = MultiVector{T,V}(rem.(value(a),m))
-div(a::MultiVector{T,V},m) where {T,V} = MultiVector{T,V}(div.(value(a),m))
-
-## exponential & logarithm function
-
-import Base: exp, log
-
-function exp(t::T) where T<:TensorAlgebra{V} where V
-    terms = TensorAlgebra{V}[t,(t^2)/2]
-    norms = abs.(terms)
-    k = 3
-    while norms[end]<norms[end-1] || norms[end]>1
-        push!(terms,(terms[end]*t)/k)
-        push!(norms,abs(terms[end]))
-        k += 1
-    end
-    return 1+sum(terms[1:end-1])
-end
-
-function log(t::T) where T<:TensorAlgebra{V} where V
-    frob = abs(t)
-    k = 3
-    if frob ≤ 5/4
-        prods = TensorAlgebra{V}[t-1,(t-1)^2]
-        terms = TensorAlgebra{V}[t,prods[2]/2]
-        norms = [frob,abs(terms[2])]
-        while (norms[end]<norms[end-1] || norms[end]>1) && k ≤ 300
-            push!(prods,prods[end]*(t-1))
-            push!(terms,prods[end]/(k*(-1)^(k+1)))
-            push!(norms,abs(terms[end]))
-            k += 1
-        end
-    else
-        s = inv(t*inv(t-1))
-        prods = TensorAlgebra{V}[s,s^2]
-        terms = TensorAlgebra{V}[s,2prods[2]]
-        norms = abs.(terms)
-        while (norms[end]<norms[end-1] || norms[end]>1) && k ≤ 300
-            push!(prods,prods[end]*s)
-            push!(terms,k*prods[end])
-            push!(norms,abs(terms[end]))
-            k += 1
-        end
-    end
-    return sum(terms[1:end-1])
-end
+Base.rationalize(t::Type,a::Basis{V,G},tol::Real=eps(T)) where {V,G} = Basis{V,G}(rationalize(t,value(a),tol))
+Base.rationalize(t::Type,a::MultiVector{T,V};tol::Real=eps(T)) where {T,V} = MultiVector{T,V}(rationalize.(t,value(a),tol))
+Base.rationalize(t::T;kvs...) where T<:TensorAlgebra = rationalize(Int,t;kvs...)

@@ -49,6 +49,7 @@ end
 
 @inline indices(b::Basis{V}) where V = indices(bits(b),ndims(V))
 
+@pure Basis{V}() where V = getbasis(V,0)
 @pure Basis{V}(i::Bits) where V = getbasis(V,i)
 Basis{V}(b::BitArray{1}) where V = getbasis(V,bit2int(b))
 
@@ -313,11 +314,11 @@ end
 ## Generic
 
 import Base: isinf, isapprox
-export basis, grade, hasinf, hasorigin, isorigin, scalar
+import AbstractTensors: scalar, involute, unit, even, odd
+export basis, grade, hasinf, hasorigin, isorigin, scalar, norm
 
 const VBV = Union{MValue,SValue,MBlade,SBlade,MultiVector}
 
-@pure ndims(::Basis{V}) where V = ndims(V)
 @pure valuetype(::Basis) = Int
 @pure valuetype(::Union{MValue{V,G,B,T},SValue{V,G,B,T}} where {V,G,B}) where T = T
 @pure valuetype(::TensorMixed{T}) where T = T
@@ -337,22 +338,54 @@ const VBV = Union{MValue,SValue,MBlade,SBlade,MultiVector}
 @pure hasorigin(t::Union{MValue,SValue}) = hasorigin(basis(t))
 @pure hasorigin(m::TensorAlgebra) = hasorigin(vectorspace(m))
 
-function isapprox(a::TensorMixed{T1}, b::TensorMixed{T2}) where {T1, T2}
-    rtol = Base.rtoldefault(T1, T2, 0)    
-    return norm(value(a-b)) <= rtol * max(norm(value(a)), norm(value(b)))
+for A ∈ (:TensorTerm,MSB...), B ∈ (:TensorTerm,MSB...)
+    @eval isapprox(a::S,b::T) where {S<:$A,T<:$B} = vectorspace(a)==vectorspace(b) && (grade(a)==grade(b) ? norm(a)≈norm(b) : (iszero(a) && iszero(b)))
 end
-isapprox(a::TensorMixed, b::TensorTerm) = isapprox(a, MultiVector(b))
-isapprox(b::TensorTerm, a::TensorMixed) = isapprox(a, MultiVector(b))
-isapprox(a::TensorTerm, b::TensorTerm) = isapprox(MultiVector(a), MultiVector(b))
+function isapprox(a::S,b::T) where {S<:TensorAlgebra,T<:TensorAlgebra}
+    rtol = Base.rtoldefault(valuetype(a), valuetype(b), 0)
+    return norm(a-b) <= rtol * max(norm(a), norm(b))
+end
+isapprox(a::S,b::T) where {S<:MultiVector,T<:MultiVector} = vectorspace(a)==vectorspace(b) && value(a) ≈ value(b)
+isapprox(a::S,b::T) where {S<:TensorAlgebra{V},T<:Number} where V =isapprox(a,SValue{V}(b))
+isapprox(a::S,b::T) where {S<:Number,T<:TensorAlgebra} = isapprox(b,a)
 
 """
     scalar(multivector)
     
 Return the scalar (grade 0) part of any multivector.
 """
-scalar(a::TensorMixed) = grade(a) == 0 ? a[1] : 0
-scalar(a::MultiVector) = a[0][1]
-scalar(a::TensorAlgebra) = scalar(MultiVector(a))
+@inline scalar(t::T) where T<:TensorTerm{V,0} where V = t
+@inline scalar(t::T) where T<:TensorTerm{V} where V = zero(V)
+@inline scalar(t::MultiVector) = t(0,1)
+for Blade ∈ MSB
+    @eval begin
+        @inline scalar(t::$Blade{T,V,0} where {T,V}) = t(1)
+        @inline scalar(t::$Blade{T,V} where T) where V = zero(V)
+    end
+end
+
+@inline vector(t::T) where T<:TensorTerm{V,1} where V = t
+@inline vector(t::T) where T<:TensorTerm{V} where V = zero(V)
+@inline vector(t::MultiVector) = t(1)
+for Blade ∈ MSB
+    @eval begin
+        @inline vector(t::$Blade{T,V,1} where {T,V}) = t
+        @inline vector(t::$Blade{T,V} where T) where V = zero(V)
+    end
+end
+
+@inline volume(t::T) where T<:TensorTerm{V,G} where {V,G} = G == ndims(V) ? t : zero(V)
+@inline volume(t::MultiVector{T,V} where T) where V = t(ndims(V),1)
+for Blade ∈ MSB
+    @eval begin
+        @inline volume(t::$Blade{T,V,G} where T) where {V,G} = G == ndims(V) ? t : zero(V)
+    end
+end
+
+@inline isscalar(t::T) where T<:TensorTerm = grade(t) == 0 || iszero(t)
+@inline isscalar(t::T) where T<:SBlade = grade(t) == 0 || iszero(t)
+@inline isscalar(t::T) where T<:MBlade = grade(t) == 0 || iszero(t)
+@inline isscalar(t::MultiVector) = norm(t) ≈ scalar(t)
 
 ## MultiGrade{N}
 
