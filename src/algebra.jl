@@ -175,7 +175,9 @@ for Blade ∈ MSB
     end
 end
 
-export ⊛
+export ∗, ⊛, ⊖
+const ⊖ = *
+@inline ∗(a::A,b::B) where {A<:TensorAlgebra{V},B<:TensorAlgebra{V}} where V = (~a)*b
 
 ## exterior product
 
@@ -300,7 +302,9 @@ end
 
 ## sandwich product
 
->>>(x::TensorAlgebra{V},y::TensorAlgebra{V}) where V = x * y * ~x
+>>>(x::TensorAlgebra{V},y::TensorAlgebra{V}) where V = (~x) * y * x
+const ⊘ = >>>
+export ⊘
 
 ### Product Algebra Constructor
 
@@ -957,17 +961,27 @@ function ^(v::T,i::Integer) where T<:TensorTerm
     end
     return typeof(v)<:Basis ? out : out*value(v)^i
 end
-for Term ∈ (MSB...,:MultiVector,:MultiGrade)
-    @eval begin
-        function ^(v::$Term,i::Integer)
-            i == 0 && (return getbasis(vectorspace(v),0))
-            out = v
-            for k ∈ 1:i-1
-                out *= v
-            end
-            return out
+
+function Base.:^(v::T,i::S) where {T<:TensorAlgebra{V},S<:Integer} where V
+    out = one(V)
+    if i < 8 # optimal choice ?
+        for k ∈ 1:i
+            out *= v
+        end
+    else
+        ind = indices(UInt(i))
+        K = length(ind)>0 ? ind[end] : 0
+        b = falses(K)
+        for k ∈ ind
+            b[k] = true
+        end
+        p = v
+        for k ∈ 1:K
+            b[k] && (out *= p)
+            k ≠ K && (p *= p)
         end
     end
+    return out
 end
 
 ## division
@@ -980,9 +994,10 @@ for (nv,d) ∈ ((:inv,:/),(:inv_rat,://))
             rm = ~m
             d = rm*m
             fd = norm(d)
-            for k ∈ 0:ndims(V)
-                dk = d(k)
-                norm(dk) ≈ fd && (return $d(rm,dk))
+            sd = scalar(d)
+            value(sd) ≈ fd && (return $d(rm,sd))
+            for k ∈ 1:ndims(V)
+                norm(d[k]) ≈ fd && (return $d(rm,d(k)))
             end
             throw(error("inv($m) is undefined"))
         end
@@ -1006,11 +1021,11 @@ for op ∈ (:div,:rem,:mod,:mod1,:fld,:fld1,:cld,:ldexp)
         @eval Base.$op(b::$Value{V,G,B,T},m) where {V,G,B,T} = $Value{V,G,B}($op(value(b),m))
     end
     for Blade ∈ MSB
-        @eval Base.$op(a::$Blade{T,V,G},m) where {T,V,G} = $Blade{T,V,G}($op.(value(a),m))
+        @eval Base.$op(a::$Blade{T,V,G},m::S) where {T,V,G,S} = $Blade{promote_type(T,S),V,G}($op.(value(a),m))
     end
     @eval begin
         Base.$op(a::Basis{V,G},m) where {V,G} = Basis{V,G}($op(value(a),m))
-        Base.$op(a::MultiVector{T,V},m) where {T,V} = MultiVector{T,V}($op.(value(a),m))
+        Base.$op(a::MultiVector{T,V},m::S) where {T,V,S} = MultiVector{promote_type(T,S),V}($op.(value(a),m))
     end
 end
 for op ∈ (:mod2pi,:rem2pi,:rad2deg,:deg2rad)
@@ -1018,11 +1033,11 @@ for op ∈ (:mod2pi,:rem2pi,:rad2deg,:deg2rad)
         @eval Base.$op(b::$Value{V,G,B,T}) where {V,G,B,T} = $Value{V,G,B}($op(value(b)))
     end
     for Blade ∈ MSB
-        @eval Base.$op(a::$Blade{T,V,G}) where {T,V,G} = $Blade{T,V,G}($op.(value(a)))
+        @eval Base.$op(a::$Blade{T,V,G}) where {T,V,G} = $Blade{promote_type(T,Float64),V,G}($op.(value(a)))
     end
     @eval begin
         Base.$op(a::Basis{V,G}) where {V,G} = Basis{V,G}($op(value(a)))
-        Base.$op(a::MultiVector{T,V}) where {T,V} = MultiVector{T,V}($op.(value(a)))
+        Base.$op(a::MultiVector{T,V}) where {T,V} = MultiVector{promote_type(T,Float64),V}($op.(value(a)))
     end
 end
 for Value ∈ MSV
