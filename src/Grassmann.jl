@@ -8,7 +8,7 @@ using ComputedFieldTypes, AbstractLattices
 using DirectSum, AbstractTensors
 
 export vectorspace, ⊕, ℝ, @V_str, @S_str, @D_str, Signature, DiagonalForm, value
-import DirectSum: hasinf, hasorigin, dualtype, dual, value, vectorspace, V0, ⊕, pre, vsn
+import DirectSum: hasinf, hasorigin, mixedmode, dual, value, vectorspace, V0, ⊕, pre, vsn
 
 include("utilities.jl")
 include("multivectors.jl")
@@ -19,7 +19,7 @@ include("forms.jl")
 
 ## generators
 
-function labels(V::T,vec::String=pre[1],cov::String=pre[2],duo::String=pre[3],dif::String=pre[4]) where T<:VectorSpace
+function labels(V::T,vec::String=pre[1],cov::String=pre[2],duo::String=pre[3],dif::String=pre[4]) where T<:VectorBundle
     N,io,icr = ndims(V),IOBuffer(),1
     els = Array{Symbol,1}(undef,1<<N)
     els[1] = Symbol(vec)
@@ -34,9 +34,9 @@ function labels(V::T,vec::String=pre[1],cov::String=pre[2],duo::String=pre[3],di
     return els
 end
 
-#@pure labels(V::T) where T<:VectorSpace = labels(V,pre[1],pre[2],pre[3],pre[4])
+#@pure labels(V::T) where T<:VectorBundle = labels(V,pre[1],pre[2],pre[3],pre[4])
 
-@pure function generate(V::VectorSpace{N}) where N
+@pure function generate(V::VectorBundle{N}) where N
     exp = Basis{V}[Basis{V,0,g_zero(Bits)}()]
     for i ∈ 1:N
         set = combo(N,i)
@@ -49,7 +49,7 @@ end
 
 export @basis, @basis_str, @dualbasis, @dualbasis_str, @mixedbasis, @mixedbasis_str
 
-function basis(V::VectorSpace,sig=vsn[1],vec=pre[1],cov=pre[2],duo=pre[3],dif=pre[4])
+function basis(V::VectorBundle,sig=vsn[1],vec=pre[1],cov=pre[2],duo=pre[3],dif=pre[4])
     N = ndims(V)
     if N > algebra_limit
         Λ(V) # fill cache
@@ -97,18 +97,18 @@ macro mixedbasis_str(str)
     Expr(:block,bases,basis(V',vsn[2]),basis(V),bases.args[end])
 end
 
-@inline function lookup_basis(V::VectorSpace,v::Symbol)::Union{SValue,Basis}
+@inline function lookup_basis(V::VectorBundle,v::Symbol)::Union{SBlade,Basis}
     p,b,w,z = DirectSum.indexparity(V,v)
     z && return g_zero(V)
     d = Basis{w}(b)
-    return p ? SValue(-1,d) : d
+    return p ? SBlade(-1,d) : d
 end
 
 ## fundamentals
 
 export hyperplanes
 
-@pure hyperplanes(V::VectorSpace{N}) where N = map(n->UniformScaling{Bool}(false)*getbasis(V,1<<n),0:N-1-diffmode(V))
+@pure hyperplanes(V::VectorBundle{N}) where N = map(n->UniformScaling{Bool}(false)*getbasis(V,1<<n),0:N-1-diffmode(V))
 
 abstract type SubAlgebra{V} <: TensorAlgebra{V} end
 
@@ -122,6 +122,10 @@ Base.length(a::T) where T<:SubAlgebra{V} where V = 1<<ndims(V)
 
 ⊕(::SubAlgebra{V},::SubAlgebra{W}) where {V,W} = getalgebra(V⊕W)
 +(::SubAlgebra{V},::SubAlgebra{W}) where {V,W} = getalgebra(V⊕W)
+
+for M ∈ (:Signature,:DiagonalForm)
+    @eval (::$M)(::S) where S<:SubAlgebra{V} where V = MultiVector{Int,V}(ones(Int,1<<ndims(V)))
+end
 
 ## Algebra{N}
 
@@ -144,12 +148,12 @@ getindex(a::Algebra,i::UnitRange{Int}) = [getindex(a,j) for j ∈ i]
     end
 end
 
-function Base.collect(s::VectorSpace)
+function Base.collect(s::VectorBundle)
     sym = labels(s)
     @inbounds Algebra{s}(generate(s),Dict{Symbol,Int}([sym[i]=>i for i ∈ 1:1<<ndims(s)]))
 end
 
-@pure Algebra(s::VectorSpace) = getalgebra(s)
+@pure Algebra(s::VectorBundle) = getalgebra(s)
 @pure Algebra(n::Int,d::Int=0,o::Int=0,s=zero(Bits)) = getalgebra(n,d,o,s)
 Algebra(s::String) = getalgebra(vectorspace(s))
 Algebra(s::String,v::Symbol) = getbasis(vectorspace(s),v)
@@ -181,7 +185,7 @@ end
     getalgebra(N,doc2m(parse(Int,V[3]),parse(Int,V[4]),C),C>0 ? DirectSum.flip_sig(N,S) : S)
 end
 
-# Allocating thread-safe $(2^n)×Basis{VectorSpace}
+# Allocating thread-safe $(2^n)×Basis{VectorBundle}
 const Λ0 = Λ{V0}(SVector{1,Basis{V0}}(Basis{V0,0,zero(Bits)}()),Dict(:e=>1))
 
 for (vs,dat) ∈ ((:Signature,Bits),(:DiagonalForm,Int))
@@ -205,7 +209,7 @@ for (vs,dat) ∈ ((:Signature,Bits),(:DiagonalForm,Int))
             @inbounds $algebra_cache[d+1][n][m+1][s]
         end
         @pure function getalgebra(V::$vs{N,M,S,D}) where {N,M,S,D}
-            dualtype(V)<0 && N>2algebra_limit && (return getextended(V))
+            mixedmode(V)<0 && N>2algebra_limit && (return getextended(V))
             $(Symbol(:getalgebra_,vs))(N,M,S,D)
         end
     end
@@ -214,8 +218,8 @@ end
 @pure getalgebra(n::Int,d::Int,o::Int,s,c::Int=0) = getalgebra_Signature(n,doc2m(d,o,c),s)
 @pure getalgebra(n::Int,m::Int,s) = getalgebra_Signature(n,m,Bits(s))
 
-@pure getbasis(V::VectorSpace,v::Symbol) = getproperty(getalgebra(V),v)
-@pure function getbasis(V::VectorSpace{N},b) where N
+@pure getbasis(V::VectorBundle,v::Symbol) = getproperty(getalgebra(V),v)
+@pure function getbasis(V::VectorBundle{N},b) where N
     B = Bits(b)
     if N ≤ algebra_limit
         @inbounds getalgebra(V).b[basisindex(ndims(V),B)]
@@ -231,7 +235,7 @@ struct SparseAlgebra{V} <: SubAlgebra{V}
     g::Dict{Symbol,Int}
 end
 
-@pure function SparseAlgebra(s::VectorSpace)
+@pure function SparseAlgebra(s::VectorBundle)
     sym = labels(s)
     SparseAlgebra{s}(sym,Dict{Symbol,Int}([sym[i]=>i for i ∈ 1:1<<ndims(s)]))
 end
@@ -270,7 +274,7 @@ end
 
 struct ExtendedAlgebra{V} <: SubAlgebra{V} end
 
-@pure ExtendedAlgebra(s::VectorSpace) = ExtendedAlgebra{s}()
+@pure ExtendedAlgebra(s::VectorBundle) = ExtendedAlgebra{s}()
 
 @pure function Base.getproperty(a::ExtendedAlgebra{V},v::Symbol) where V
     if v ∈ (:b,:g)
@@ -289,7 +293,7 @@ function show(io::IO,a::ExtendedAlgebra{V}) where V
     print(io,"Grassmann.ExtendedAlgebra{$V,$N}($(getbasis(V,0)), ..., $(getbasis(V,N-1)))")
 end
 
-# Extending (2^n)×Basis{VectorSpace}
+# Extending (2^n)×Basis{VectorBundle}
 
 for (ExtraAlgebra,extra) ∈ ((SparseAlgebra,:sparse),(ExtendedAlgebra,:extended))
     getextra = Symbol(:get,extra)
@@ -339,15 +343,15 @@ d(ω::T) where T<:TensorAlgebra{V} where V = V(∇)∧ω
 function __init__()
     @require Reduce="93e0c654-6965-5f22-aba9-9c1ae6b3c259" begin
         import Reduce: RExpr
-        *(a::RExpr,b::Basis{V}) where V = SValue{V}(a,b)
-        *(a::Basis{V},b::RExpr) where V = SValue{V}(b,a)
+        *(a::RExpr,b::Basis{V}) where V = SBlade{V}(a,b)
+        *(a::Basis{V},b::RExpr) where V = SBlade{V}(b,a)
         *(a::RExpr,b::MultiVector{T,V}) where {T,V} = MultiVector{promote_type(T,F),V}(broadcast(Reduce.Algebra.:*,a,b.v))
         *(a::MultiVector{T,V},b::RExpr) where {T,V} = MultiVector{promote_type(T,F),V}(broadcast(Reduce.Algebra.:*,a.v,b))
         *(a::RExpr,b::MultiGrade{V}) where V = MultiGrade{V}(broadcast(Reduce.Algebra.:*,a,b.v))
         *(a::MultiGrade{V},b::RExpr) where V = MultiGrade{V}(broadcast(Reduce.Algebra.:*,a.v,b))
         ∧(a::RExpr,b::RExpr) = Reduce.Algebra.:*(a,b)
-        ∧(a::RExpr,b::B) where B<:TensorTerm{V,G} where {V,G} = SValue{V,G}(a,b)
-        ∧(a::A,b::RExpr) where A<:TensorTerm{V,G} where {V,G} = SValue{V,G}(b,a)
+        ∧(a::RExpr,b::B) where B<:TensorTerm{V,G} where {V,G} = SBlade{V,G}(a,b)
+        ∧(a::A,b::RExpr) where A<:TensorTerm{V,G} where {V,G} = SBlade{V,G}(b,a)
         parany = (parany...,RExpr)
         parval = (parval...,RExpr)
         parsym = (parsym...,RExpr)

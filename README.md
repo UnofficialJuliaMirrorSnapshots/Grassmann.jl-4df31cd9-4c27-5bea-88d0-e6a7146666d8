@@ -19,9 +19,12 @@ Any operations are highly extensible with high dimensional support for up to 62 
 The [DirectSum.jl](https://github.com/chakravala/DirectSum.jl) multivector parametric type polymorphism is based on tangent bundle vector spaces and conformal projective geometry to make the dispatch highly extensible for many applications.
 Additionally, interoperability between different sub-algebras is enabled by [AbstractTensors.jl](https://github.com/chakravala/AbstractTensors.jl), on which the type system is built.
 
+[![DropBox](https://img.shields.io/badge/download_PDF-DropBox-blue.svg)](https://www.dropbox.com/sh/tphh6anw0qwija4/AAACiaXig5djrLVAKLPFmGV-a/Geometric-Algebra?preview=grassmann-juliacon-2019.pdf)
+[![DOI](https://zenodo.org/badge/101519786.svg)](https://zenodo.org/badge/latestdoi/101519786)
+
   * [Design, code generation](#design-code-generation)
 	 * [Requirements](#requirements)
-  * [Direct-sum yields VectorSpace parametric type polymorphism ⨁](#direct-sum-yields-vectorspace-parametric-type-polymorphism-)
+  * [Direct-sum yields VectorBundle parametric type polymorphism ⨁](#direct-sum-yields-vectorspace-parametric-type-polymorphism-)
 	 * [Tangent bundle](#tangent-bundle)
 	 * [Interoperability for TensorAlgebra{V}](#interoperability-for-tensoralgebrav)
   * [Generating elements and geometric algebra Λ(V)](#generating-elements-and-geometric-algebra-λv)
@@ -35,7 +38,7 @@ Additionally, interoperability between different sub-algebras is enabled by [Abs
 
 #### Design, code generation
 
-The design of [Grassmann.jl](https://github.com/chakravala/Grassmann.jl) is based on the `TensorAlgebra` abstract type system interoperability from [AbstractTensors.jl](https://github.com/chakravala/AbstractTensors.jl) with a `VectorSpace` parameter from [DirectSum.jl](https://github.com/chakravala/DirectSum.jl).
+The design of [Grassmann.jl](https://github.com/chakravala/Grassmann.jl) is based on the `TensorAlgebra` abstract type system interoperability from [AbstractTensors.jl](https://github.com/chakravala/AbstractTensors.jl) with a `VectorBundle` parameter from [DirectSum.jl](https://github.com/chakravala/DirectSum.jl).
 Abstract tangent vector space type operations happen at compile-time, resulting in a differential conformal geometric algebra of hyper-dual multivector forms.
 
 The abstract nature of the product algebra code generation enables one to automate the extension of the product operations to any specific number field type (including symbolic coefficients with [Reduce.jl](https://github.com/chakravala/Reduce.jl) or SymPy.jl), by taking advantage of Julia's type system.
@@ -50,7 +53,7 @@ Thanks to the design of the product algebra code generation, any additional opti
 Likewise, any new product formulas will be able to quickly gain from the setup of all of the existing optimizations.
 
 The *Grassmann.jl* package and its accompanying support packages provide an extensible platform for high performance computing with geometric algebra at high dimensions.
-This enables the usage of many different types of `TensorAlgebra` along with various `VectorSpace` parameters and interoperability for a wide range of scientific and research applications.
+This enables the usage of many different types of `TensorAlgebra` along with various `VectorBundle` parameters and interoperability for a wide range of scientific and research applications.
 
 ### Requirements
 
@@ -60,15 +63,15 @@ This requires a merged version of `ComputedFieldTypes` at https://github.com/vtj
 
 Interoperability of `TensorAlgebra` with other packages is automatically enabled by [DirectSum.jl](https://github.com/chakravala/DirectSum.jl) and [AbstractTensors.jl](https://github.com/chakravala/AbstractTensors.jl).
 
-## Direct-sum yields `VectorSpace` parametric type polymorphism ⨁
+## Direct-sum yields `VectorBundle` parametric type polymorphism ⨁
 
-The *DirectSum.jl* package is a work in progress providing the necessary tools to work with arbitrary dual `VectorSpace` elements with optional origin.
-Due to the parametric type system for the generating `VectorSpace`, the Julia compiler can fully preallocate and often cache values efficiently ahead of run-time.
+The *DirectSum.jl* package is a work in progress providing the necessary tools to work with arbitrary dual `VectorBundle` elements with optional origin.
+Due to the parametric type system for the generating `VectorBundle`, the Julia compiler can fully preallocate and often cache values efficiently ahead of run-time.
 Although intended for use with the *Grassmann.jl* package, `DirectSum` can be used independently.
 
-Let `N` be the dimension of a `VectorSpace{N}`.
+Let `N` be the dimension of a `VectorBundle{N}`.
 The metric signature of the `Basis{V,1}` elements of a vector space `V` can be specified with the `V"..."` constructor by using `+` and `-` to specify whether the `Basis{V,1}` element of the corresponding index squares to `+1` or `-1`.
-E.g., `V"+++"` constructs a positive definite 3-dimensional `VectorSpace`.
+E.g., `V"+++"` constructs a positive definite 3-dimensional `VectorBundle`.
 ```Julia
 julia> ℝ^3 == V"+++" == vectorspace(3)
 true
@@ -84,7 +87,7 @@ julia> V'
 julia> W = V⊕V'
 ⟨-++++---⟩*
 ```
-The direct sum of a `VectorSpace` and its dual `V⊕V'` represents the full mother space `V*`.
+The direct sum of a `VectorBundle` and its dual `V⊕V'` represents the full mother space `V*`.
 ```Julia
 julia> collect(V) # all vector basis elements
 Grassmann.Algebra{⟨-+++⟩,16}(v, v₁, v₂, v₃, v₄, v₁₂, v₁₃, v₁₄, v₂₃, v₂₄, v₃₄, v₁₂₃, v₁₂₄, v₁₃₄, ...)
@@ -131,38 +134,38 @@ More information about `DirectSum` is available  at https://github.com/chakraval
 
 ### Interoperability for `TensorAlgebra{V}`
 
-*AbstractTensors.jl* provides the abstract interoperability between tensor algebras having differing `VectorSpace` parameters. The great thing about it is that the `VectorSpace` unions and intersections are handled separately in a different package and the actual tensor implementations are handled separately also. This enables anyone who wishes to be interoperable with `TensorAlgebra` to build their own subtypes in their own separate package with interoperability automatically possible between it all, provided the guidelines are followed.
+*AbstractTensors.jl* provides the abstract interoperability between tensor algebras having differing `VectorBundle` parameters. The great thing about it is that the `VectorBundle` unions and intersections are handled separately in a different package and the actual tensor implementations are handled separately also. This enables anyone who wishes to be interoperable with `TensorAlgebra` to build their own subtypes in their own separate package with interoperability automatically possible between it all, provided the guidelines are followed.
 
-The key to making the whole interoperability work is that each `TensorAlgebra` subtype shares a `VectorSpace` parameter (with all `isbitstype` parameters), which contains all the info needed at compile time to make decisions about conversions. So other packages need only use the vector space information to decide on how to convert based on the implementation of a type. If external methods are needed, they can be loaded by `Requires` when making a separate package with `TensorAlgebra` interoperability.
+The key to making the whole interoperability work is that each `TensorAlgebra` subtype shares a `VectorBundle` parameter (with all `isbitstype` parameters), which contains all the info needed at compile time to make decisions about conversions. So other packages need only use the vector space information to decide on how to convert based on the implementation of a type. If external methods are needed, they can be loaded by `Requires` when making a separate package with `TensorAlgebra` interoperability.
 
-Since `VectorSpace` choices are fundamental to `TensorAlgebra` operations, the universal interoperability between `TensorAlgebra{V}` elements with different associated `VectorSpace` choices is naturally realized by applying the `union` morphism to operations.
+Since `VectorBundle` choices are fundamental to `TensorAlgebra` operations, the universal interoperability between `TensorAlgebra{V}` elements with different associated `VectorBundle` choices is naturally realized by applying the `union` morphism to operations.
 Some of the method names like `+,-,\otimes,\times,\cdot,*` for `TensorAlgebra` elements are shared across different packages, with interoperability.
 
 Additionally, a universal unit volume element can be specified in terms of `LinearAlgebra.UniformScaling`, which is independent of `V` and has its interpretation only instantiated by the context of the `TensorAlgebra{V}` element being operated on.
-The universal interoperability of `LinearAlgebra.UniformScaling` as a pseudoscalar element which takes on the `VectorSpace` form of any other `TensorAlgebra` element is handled globally.
+The universal interoperability of `LinearAlgebra.UniformScaling` as a pseudoscalar element which takes on the `VectorBundle` form of any other `TensorAlgebra` element is handled globally.
 This enables the usage of `I` from `LinearAlgebra` as a universal pseudoscalar element.
 
 By importing the `AbstractTensors` module, the *Reduce.jl* package is able to correctly bypass operations on `TensorAlgebra` elements to the correct methods within the scope of the `Reduce.Algebra` module.
 This requires no additional overhead for the `Grassmann` or `Reduce` packages, because the `AbstractTensors` interoperability interface enables separate precompilation of both.
-Additionally, the `VectorSpace` interoperability also enables more arbitrary inputs.
+Additionally, the `VectorBundle` interoperability also enables more arbitrary inputs.
 
 ## Generating elements and geometric algebra Λ(V)
 
-By virtue of Julia's multiple dispatch on the field type `T`, methods can specialize on the `Dimension{N}` and `Grade{G}` and `VectorSpace{N,D,O}` via the `TensorAlgebra` subtypes, such as `Basis{V,G}`, `SValue{V,G,B,T}`, `MValue{V,G,B,T}`, `SBlade{T,V,G}`, `MBlade{T,V,G}`, `MultiVector{T,V}`, and `MultiGrade{V}` types.
+By virtue of Julia's multiple dispatch on the field type `T`, methods can specialize on the `Dimension{N}` and `Grade{G}` and `VectorBundle{N,D,O}` via the `TensorAlgebra` subtypes, such as `Basis{V,G}`, `SBlade{V,G,B,T}`, `MBlade{V,G,B,T}`, `SChain{T,V,G}`, `MChain{T,V,G}`, `MultiVector{T,V}`, and `MultiGrade{V}` types.
 
 The elements of the `Algebra` can be generated in many ways using the `Basis` elements created by the `@basis` macro,
 ```Julia
 julia> using Grassmann; @basis ℝ'⊕ℝ^3 # equivalent to basis"-+++"
 (⟨-+++⟩, v, v₁, v₂, v₃, v₄, v₁₂, v₁₃, v₁₄, v₂₃, v₂₄, v₃₄, v₁₂₃, v₁₂₄, v₁₃₄, v₂₃₄, v₁₂₃₄)
 ```
-As a result of this macro, all of the `Basis{V,G}` elements generated by that `VectorSpace` become available in the local workspace with the specified naming.
-The first argument provides signature specifications, the second argument is the variable name for the `VectorSpace`, and the third and fourth argument are the the prefixes of the `Basis` vector names (and covector basis names). By default, `V` is assigned the `VectorSpace` and `v` is the prefix for the `Basis` elements.
+As a result of this macro, all of the `Basis{V,G}` elements generated by that `VectorBundle` become available in the local workspace with the specified naming.
+The first argument provides signature specifications, the second argument is the variable name for the `VectorBundle`, and the third and fourth argument are the the prefixes of the `Basis` vector names (and covector basis names). By default, `V` is assigned the `VectorBundle` and `v` is the prefix for the `Basis` elements.
 ```Julia
 julia> V # Minkowski spacetime
 ⟨-+++⟩
 
 julia> typeof(V) # dispatch by vector space
-VectorSpace{4,0,0x0000000000000001}
+VectorBundle{4,0,0x0000000000000001}
 
 julia> typeof(v13) # extensive type info
 Basis{⟨-+++⟩,2,0x0000000000000005}
@@ -211,7 +214,7 @@ v₂₃
 It is possible to assign the **quaternion** generators `i,j,k` with
 ```Julia
 julia> i,j,k = hyperplanes(ℝ^3)
-3-element Array{SValue{⟨+++⟩,2,B,Int64} where B,1}:
+3-element Array{SBlade{⟨+++⟩,2,B,Int64} where B,1}:
  -1v₂₃
  1v₁₃
  -1v₁₂
@@ -269,7 +272,7 @@ v₁₂₃₄₅₆₇₈₉₀abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVW
 However, Julia is only able to allocate full `MultiVector` for `N≤22`, with sparse operations only available at higher dimension.
 
 While `Grassmann.Algebra{V}` is a container for the `TensorAlgebra` generators of `V`, the `Grassmann.Algebra` is only cached for `N≤8`.
-For a `VectorSpace{N}` of dimension `8<N≤22`, the `Grassmann.SparseAlgebra` type is used.
+For a `VectorBundle{N}` of dimension `8<N≤22`, the `Grassmann.SparseAlgebra` type is used.
 
 ```Julia
 julia> Λ(22)
@@ -300,7 +303,7 @@ In order to work with a `TensorAlgebra{V}`, it is necessary for some computation
 julia> Λ(7) + Λ(7)'
 Grassmann.SparseAlgebra{⟨+++++++-------⟩*,16384}(v, ..., v₁₂₃₄₅₆₇w¹²³⁴⁵⁶⁷)
 ```
-One way of declaring the cache for all 3 combinations of a `VectorSpace{N}` and its dual is to ask for the sum `Λ(V) + Λ(V)'`, which is equivalent to `Λ(V⊕V')`, but this does not initialize the cache of all 3 combinations unlike the former.
+One way of declaring the cache for all 3 combinations of a `VectorBundle{N}` and its dual is to ask for the sum `Λ(V) + Λ(V)'`, which is equivalent to `Λ(V⊕V')`, but this does not initialize the cache of all 3 combinations unlike the former.
 
 The staging of the precompilation and caching is designed so that a user can smoothly transition between very high dimensional and low dimensional algebras in a single session, with varying levels of extra caching and optimizations.
 
@@ -329,7 +332,7 @@ julia> v∞∅ * v∞, v∞∅ * v∅
 julia> v∞ * v∅, v∅ * v∞
 (-1 + 1v∞∅, -1 - 1v∞∅)
 ```
-The index number `N` of the `VectorSpace` corresponds to the total number of generator elements. However, even though `S"∞∅+++"` is of type `VectorSpace{5,3}` with `5` generator elements, it can be internally recognized in the direct sum algebra as being an embedding of a 3-index `VectorSpace{3,0}` with additional encoding of the null-basis (origin and point at infinity) in the parameter `M` of the `VectorSpace{N,M}` type.
+The index number `N` of the `VectorBundle` corresponds to the total number of generator elements. However, even though `S"∞∅+++"` is of type `VectorBundle{5,3}` with `5` generator elements, it can be internally recognized in the direct sum algebra as being an embedding of a 3-index `VectorBundle{3,0}` with additional encoding of the null-basis (origin and point at infinity) in the parameter `M` of the `VectorBundle{N,M}` type.
 
 ### Differential forms and Taylor's tangent algebra
 
@@ -426,10 +429,10 @@ julia> generator = [8 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0;
 
 julia> const E24,W24 = Λ(24), ℝ^24+(ℝ^24)';
 
-julia> const Leech = SBlade{Float64,W24}(generator./sqrt(8));
+julia> const Leech = SChain{Float64,W24}(generator./sqrt(8));
 
 julia> typeof(Leech)
-SBlade{Float64,⟨++++++++++++++++++++++++------------------------⟩*,2,1128}
+SChain{Float64,⟨++++++++++++++++++++++++------------------------⟩*,2,1128}
 
 julia> ndims(vectorspace(Leech))
 48
