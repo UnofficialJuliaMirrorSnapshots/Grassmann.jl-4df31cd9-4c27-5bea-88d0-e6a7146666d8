@@ -50,9 +50,8 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
                     if v ≠ 0 && !diffcheck(V,a,b)
                         A,B,Q,Z = symmetricmask(V,a,b)
                         val = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(A,B,V) ? $SUB(v) : v) : $MUL(parityinner(A,B,V),v)
-                        if diffvars(V)≠0 && !iszero(Z)
-                            #T≠Any && (return true)
-                            val *= getbasis(V,Z)
+                        if diffvars(V)≠0
+                            !iszero(Z) && (T≠Any ? (return true) : (val *= getbasis(V,Z)))
                             count_ones(Q)+order(val)>diffmode(V) && (return false)
                         end
                         $s(m,val,(A⊻B)|Q,Dimension{N}())
@@ -64,9 +63,8 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
                         A,B,Q,Z = symmetricmask(V,a,b)
                         pcc,bas,cc = (hasinf(V) && hasorigin(V)) ? conformal(A,B,V) : (false,A⊻B,false)
                         val = (typeof(V)<:Signature || count_ones(A&B)==0) ? (parity(A,B,V)⊻pcc ? $SUB(v) : v) : $MUL(parityinner(A,B,V),pcc ? $SUB(v) : v)
-                        if diffvars(V)≠0 && !iszero(Z)
-                            #T≠Any && (return true)
-                            val *= getbasis(V,Z)
+                        if diffvars(V)≠0
+                            !iszero(Z) && (T≠Any ? (return true) : (val *= getbasis(V,Z)))
                             count_ones(Q)+order(val)>diffmode(V) && (return false)
                         end
                         $s(m,val,bas|Q,Dimension{N}())
@@ -86,10 +84,12 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
                         if val ≠ 0
                             g,C,t,Z = $uct(A,B,V)
                             v = val
-                            if diffvars(V)≠0 && !iszero(Z)
-                                #T≠Any && (return true)
-                                _,_,Q,_ = symmetricmask(V,A,B)
-                                v *= getbasis(V,Z)
+                            if diffvars(V)≠0
+                                if !iszero(Z)
+                                    T≠Any && (return true)
+                                    _,_,Q,_ = symmetricmask(V,A,B)
+                                    v *= getbasis(V,Z)
+                                end
                                 count_ones(Q)+order(v)>diffmode(V) && (return false)
                             end
                             t && $s(m,typeof(V) <: Signature ? g ? $SUB(v) : v : $MUL(g,v),C,Dimension{N}())
@@ -157,9 +157,16 @@ Grassmann-Poincare left complement: ⋆'ω = I∗'ω
 import Base: reverse, conj, ~
 export involute
 
+@pure grade_basis(V,B) = B&(one(Bits)<<DirectSum.grade(V)-1)
+@pure grade_basis(v,::Basis{V,G,B} where G) where {V,B} = grade_basis(V,B)
+@pure grade(V,B) = count_ones(grade_basis(V,B))
+@pure grade(v,::Basis{V,G,B} where G) where {V,B} = grade(V,B)
+
 for r ∈ (:reverse,:involute,:conj)
     p = Symbol(:parity,r)
-    @eval @pure $r(b::Basis{V,G,B}) where {V,G,B} =$p(G) ? SBlade{V}(-value(b),b) : b
+    @eval @pure function $r(b::Basis{V,G,B}) where {V,G,B}
+        $p(grade(V,B)) ? SBlade{V}(-value(b),b) : b
+    end
     for Blade ∈ MSB
         @eval $r(b::$Blade) = value(b) ≠ 0 ? value(b) * $r(basis(b)) : g_zero(vectorspace(b))
     end
@@ -270,7 +277,10 @@ function ∧(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     A,B,Q,Z = symmetricmask(V,ba,bb)
     ((count_ones(A&B)>0) || diffcheck(V,ba,bb)) && (return g_zero(V))
     v = value(a)*value(b)
-    diffvars(V)≠0 && !iszero(Z) && (v = SBlade{V}(getbasis(V,Z),v); count_ones(Q)+order(v)>diffmode(V) && (return zero(V)))
+    if diffvars(V)≠0 && !iszero(Z)
+        v=typeof(v)<:TensorMixed ? SBlade{V}(getbasis(V,Z),v) : SBlade{V}(v,getbasis(V,Z))
+        count_ones(Q)+order(v)>diffmode(V) && (return zero(V))
+    end
     return SBlade{V}(parity(x,y) ? -v : v,getbasis(V,(A⊻B)|Q))
 end
 
@@ -305,7 +315,7 @@ function ∨(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     v = value(a)*value(b)
     if diffvars(V)≠0 && !iszero(Z)
         _,_,Q,_ = symmetricmask(V,bits(basis(a)),bits(basis(b)))
-        v = SBlade{V}(getbasis(V,Z),v)
+        v=typeof(v)<:TensorMixed ? SBlade{V}(getbasis(V,Z),v) : SBlade{V}(v,getbasis(V,Z))
         count_ones(Q)+order(v)>diffmode(V) && (return zero(V))
     end
     return SBlade{V}(p ? -v : v,getbasis(V,C))
@@ -351,7 +361,7 @@ function contraction(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where 
     v = value(a)*value(b)
     if diffvars(V)≠0 && !iszero(Z)
         _,_,Q,_ = symmetricmask(V,bits(basis(a)),bits(basis(b)))
-        v = SBlade{V}(getbasis(V,Z),v)
+        v=typeof(v)<:TensorMixed ? SBlade{V}(getbasis(V,Z),v) : SBlade{V}(v,getbasis(V,Z))
         count_ones(Q)+order(v)>diffmode(V) && (return zero(V))
     end
     return SBlade{V}(typeof(V) <: Signature ? (g ? -v : v) : g*v,getbasis(V,C))
@@ -400,7 +410,7 @@ function cross(a::X,b::Y) where {X<:TensorTerm{V},Y<:TensorTerm{V}} where V
     v = value(a)*value(b)
     if diffvars(V)≠0 && !iszero(Z)
         _,_,Q,_ = symmetricmask(V,bits(basis(a)),bits(basis(b)))
-        v = SBlade{V}(getbasis(V,Z),v)
+        v=typeof(v)<:TensorMixed ? SBlade{V}(getbasis(V,Z),v) : SBlade{V}(v,getbasis(V,Z))
         count_ones(Q)+order(v)>diffmode(V) && (return zero(V))
     end
     return SBlade{V}(p ? -v : v,getbasis(V,C))
@@ -481,11 +491,13 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
         @inline function inneraddvalue!(mv::MBlade{V,0,B,T} where {W,B},α,β,γ::T) where {V,T<:$Field}
             if γ≠0
                 g,C,f,Z = interior(α,β,V)
-                #!iszero(C) && T≠Any && (return true)
+                !iszero(C) && T≠Any && (return true)
                 v = iszero(C) ? γ : γ*getbasis(V,C)
-                if diffvars(V)≠0 && !iszero(Z)
-                    _,_,Q,_ = symmetricmask(V,α,β)
-                    v *= getbasis(V,Z)
+                if diffvars(V)≠0
+                    if !iszero(Z)
+                        _,_,Q,_ = symmetricmask(V,α,β)
+                        v *= getbasis(V,Z)
+                    end
                     order(v)>diffmode(V) && (return false)
                 end
                 f && (mv.v = typeof(V)<:Signature ? (g ? $SUB(mv.v,v) : $ADD(mv.v,v)) : $ADD(mv.v,$MUL(g,v)))
@@ -556,7 +568,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                 $(insert_expr((:N,:t,:mv,:ib,:μ),VEC)...)
                 for i ∈ 1:binomial(N,G)
                     if @inbounds inneraddvalue!(mv,ib[i],bits(b),a[i])&μ
-                        $(insert_expr((:mv,);mv=:(value(mv))))
+                        $(insert_expr((:mv,);mv=:(value(mv)))...)
                         @inbounds inneraddvalue!(mv,ib[i],bits(b),a[i])
                     end
                 end
@@ -566,7 +578,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                 $(insert_expr((:N,:t,:mv,:ib,:μ),VEC)...)
                 for i ∈ 1:binomial(N,G)
                     if @inbounds inneraddvalue!(mv,bits(a),ib[i],b[i])&μ
-                        $(insert_expr((:mv,);mv=:(value(mv))))
+                        $(insert_expr((:mv,);mv=:(value(mv)))...)
                         @inbounds inneraddvalue!(mv,bits(a),ib[i],b[i])
                     end
                 end
@@ -607,7 +619,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     $(insert_expr((:N,:t,:mv,:ib,:μ),VEC)...)
                     for i ∈ 1:binomial(N,G)
                         if @inbounds inneraddvalue!(mv,ib[i],bits(basis(b)),$MUL(a[i],b.v))&μ
-                            $(insert_expr((:mv,);mv=:(value(mv))))
+                            $(insert_expr((:mv,);mv=:(value(mv)))...)
                             @inbounds inneraddvalue!(mv,ib[i],bits(basis(b)),$MUL(a[i],b.v))
                         end
 
@@ -618,7 +630,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     $(insert_expr((:N,:t,:mv,:ib,:μ),VEC)...)
                     for i ∈ 1:binomial(N,G)
                         if @inbounds inneraddvalue!(mv,bits(basis(a)),ib[i],$MUL(a.v,b[i]))&μ
-                            $(insert_expr((:mv,);mv=:(value(mv))))
+                            $(insert_expr((:mv,);mv=:(value(mv)))...)
                             @inbounds inneraddvalue!(mv,bits(basis(a)),ib[i],$MUL(a.v,b[i]))
                         end
                     end
@@ -663,7 +675,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     @inbounds v,ibi = a[i],ib[i]
                     v≠0 && for j ∈ 1:bng
                         if @inbounds inneraddvalue!(mv,ibi,ib[j],$MUL(v,b[j]))&μ
-                            $(insert_expr((:mv,);mv=:(value(mv))))
+                            $(insert_expr((:mv,);mv=:(value(mv)))...)
                             @inbounds inneraddvalue!(mv,ibi,ib[j],$MUL(v,b[j]))
                         end
                     end
@@ -738,12 +750,18 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
         for Chain ∈ MSC
             @eval begin
                 function $reverse(b::$Chain{T,V,G}) where {T<:$Field,V,G}
-                    !$p(G) && (return b)
+                    D = diffvars(V)
+                    D==0 && !$p(G) && (return b)
                     $(insert_expr((:N,:ib),VEC)...)
                     out = zeros($VEC(N,G,T))
                     for k ∈ 1:binomial(N,G)
-                        @inbounds val = b.v[k]
-                        @inbounds val≠0 && setblade!(out,$SUB(val),ib[k],Dimension{N}())
+                        @inbounds v = b.v[k]
+                        v≠0 && if D==0
+                            @inbounds setblade!(out,$SUB(v),ib[k],Dimension{N}())
+                        else
+                            @inbounds B = ib[k]
+                            setblade!(out,$p(grade(V,B)) ? $SUB(v) : v,B,Dimension{N}())
+                        end
                     end
                     return $Chain{T,V,G}(out)
                 end
@@ -751,14 +769,19 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
         end
         @eval begin
             function $reverse(m::MultiVector{T,V}) where {T<:$Field,V}
-                $(insert_expr((:N,:bs,:bn),VEC)...)
+                $(insert_expr((:N,:bs,:bn,:D),VEC)...)
                 out = zeros($VEC(N,T))
                 for g ∈ 1:N+1
                     pg = $p(g-1)
                     ib = indexbasis(N,g-1)
                     @inbounds for i ∈ 1:bn[g]
-                        @inbounds val = m.v[bs[g]+i]
-                        @inbounds val≠0 && setmulti!(out,pg ? $SUB(val) : val,ib[i],Dimension{N}())
+                        @inbounds v = m.v[bs[g]+i]
+                        v≠0 && if D==0
+                            @inbounds setmulti!(out,pg ? $SUB(v) : v,ib[i],Dimension{N}())
+                        else
+                            @inbounds B = ib[i]
+                            setmulti!(out,$p(grade(V,B)) ? $SUB(v) : v,B,Dimension{N}())
+                        end
                     end
                 end
                 return MultiVector{T,V}(out)
@@ -776,7 +799,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     ib = indexbasis(N,g-1)
                     @inbounds for i ∈ 1:bn[g]
                         if @inbounds $product!(V,out,ib[i],bits(b),a.v[bs[g]+i])&μ
-                            $(insert_expr((:out,);mv=:out))
+                            $(insert_expr((:out,);mv=:out)...)
                             @inbounds $product!(V,out,ib[i],bits(b),a.v[bs[g]+i])
                         end
                     end
@@ -789,7 +812,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     ib = indexbasis(N,g-1)
                     @inbounds for i ∈ 1:bn[g]
                         if @inbounds $product!(V,out,bits(a),ib[i],b.v[bs[g]+i])&μ
-                            $(insert_expr((:out,);mv=:out))
+                            $(insert_expr((:out,);mv=:out)...)
                             @inbounds $product!(V,out,bits(a),ib[i],b.v[bs[g]+i])
                         end
                     end
@@ -807,7 +830,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                             X = indexbasis(N,G-1)
                             @inbounds for j ∈ 1:bn[G]
                                 if @inbounds $product!(V,out,X[j],Y[i],$MUL(a.v[R+j],val))&μ
-                                    $(insert_expr((:out,);mv=:out))
+                                    $(insert_expr((:out,);mv=:out)...)
                                     @inbounds $product!(V,out,X[j],Y[i],$MUL(a.v[R+j],val))
                                 end
                             end
@@ -825,7 +848,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                         ib = indexbasis(N,g-1)
                         @inbounds for i ∈ 1:bn[g]
                             if @inbounds $product!(V,out,ib[i],bits(basis(b)),$MUL(a.v[bs[g]+i],b.v))&μ
-                                $(insert_expr((:out,);mv=:out))
+                                $(insert_expr((:out,);mv=:out)...)
                                 @inbounds $product!(V,out,ib[i],bits(basis(b)),$MUL(a.v[bs[g]+i],b.v))
                             end
                         end
@@ -838,7 +861,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                         ib = indexbasis(N,g-1)
                         @inbounds for i ∈ 1:bn[g]
                             if @inbounds $product!(V,out,bits(basis(a)),ib[i],$MUL(a.v,b.v[bs[g]+i]))&μ
-                                $(insert_expr((:out,);mv=:out))
+                                $(insert_expr((:out,);mv=:out)...)
                                 @inbounds $product!(V,out,bits(basis(a)),ib[i],$MUL(a.v,b.v[bs[g]+i]))
                             end
                         end
@@ -853,7 +876,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     $(insert_expr((:N,:t,:out,:ib,:μ),VEC)...)
                     for i ∈ 1:binomial(N,G)
                         if @inbounds $product!(V,out,ib[i],bits(b),a[i])&μ
-                            $(insert_expr((:out,);mv=:out))
+                            $(insert_expr((:out,);mv=:out)...)
                             @inbounds $product!(V,out,ib[i],bits(b),a[i])
                         end
                     end
@@ -863,7 +886,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                     $(insert_expr((:N,:t,:out,:ib,:μ),VEC)...)
                     for i ∈ 1:binomial(N,G)
                         if @inbounds $product!(V,out,bits(a),ib[i],b[i])&μ
-                            $(insert_expr((:out,);mv=:out))
+                            $(insert_expr((:out,);mv=:out)...)
                             @inbounds $product!(V,out,bits(a),ib[i],b[i])
                         end
                     end
@@ -877,7 +900,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                             @inbounds val = a.v[bs[g]+i]
                             val≠0 && for j ∈ 1:bng
                                 if @inbounds $product!(V,out,A[i],ib[j],$MUL(val,b[j]))&μ
-                                    $(insert_expr((:out,);mv=:out))
+                                    $(insert_expr((:out,);mv=:out)...)
                                     @inbounds $product!(V,out,A[i],ib[j],$MUL(val,b[j]))
                                 end
                             end
@@ -893,7 +916,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                             @inbounds val = b.v[bs[g]+i]
                             val≠0 && for j ∈ 1:bng
                                 if @inbounds $product!(V,out,ib[j],B[i],$MUL(a[j],val))&μ
-                                    $(insert_expr((:out,);mv=:out))
+                                    $(insert_expr((:out,);mv=:out)...)
                                     @inbounds $product!(V,out,ib[j],B[i],$MUL(a[j],val))
                                 end
                             end
@@ -908,7 +931,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                         $(insert_expr((:N,:t,:out,:ib,:μ),VEC)...)
                         for i ∈ 1:binomial(N,G)
                             if @inbounds $product!(V,out,ib[i],bits(basis(b)),$MUL(a[i],b.v))&μ
-                                $(insert_expr((:out,);mv=:out))
+                                $(insert_expr((:out,);mv=:out)...)
                                 @inbounds $product!(V,out,ib[i],bits(basis(b)),$MUL(a[i],b.v))
                             end
                         end
@@ -918,7 +941,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                         $(insert_expr((:N,:t,:out,:ib,:μ),VEC)...)
                         for i ∈ 1:binomial(N,G)
                             if @inbounds $product!(V,out,bits(basis(a)),ib[i],$MUL(a.v,b[i]))&μ
-                                $(insert_expr((:out,);mv=:out))
+                                $(insert_expr((:out,);mv=:out)...)
                                 @inbounds $product!(V,out,bits(basis(a)),ib[i],$MUL(a.v,b[i]))
                             end
                         end
@@ -937,7 +960,7 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
                         @inbounds v,ibi = a[i],ib[i]
                         v≠0 && for j ∈ 1:bnl
                             if @inbounds $product!(V,out,ibi,B[j],$MUL(v,b[j]))&μ
-                                $(insert_expr((:out,);mv=:out))
+                                $(insert_expr((:out,);mv=:out)...)
                                 @inbounds $product!(V,out,ibi,B[j],$MUL(v,b[j]))
                             end
                         end
@@ -1435,9 +1458,13 @@ end
 
 ## division
 
+@pure abs2_inv(::Basis{V,G,B} where G) where {V,B} = abs2(getbasis(V,grade_basis(V,B)))
+
 for (nv,d) ∈ ((:inv,:/),(:inv_rat,://))
     @eval begin
-        @pure $nv(b::Basis{V,G}) where {V,G}=$d(parityreverse(G) ? -1 : 1,value(b⋅b))*b
+        @pure function $nv(b::Basis{V,G,B}) where {V,G,B}
+            $d(parityreverse(grade(V,B)) ? -1 : 1,value(abs2_inv(b)))*b
+        end
         @pure $d(a,b::T) where T<:TensorAlgebra = a*$nv(b)
         @pure $d(a::N,b::T) where {N<:Number,T<:TensorAlgebra} = a*$nv(b)
         function $nv(m::MultiVector{T,V}) where {T,V}
@@ -1453,10 +1480,20 @@ for (nv,d) ∈ ((:inv,:/),(:inv_rat,://))
         end
     end
     for Blade ∈ MSB
-        @eval $nv(b::$Blade{V,G,B,T}) where {V,G,B,T} = $Blade{V,G,B}($d(parityreverse(G) ? -one(T) : one(T),value(abs2(B))*value(b)))
+        @eval begin
+            function $nv(b::$Blade{V,G,B,T}) where {V,G,B,T}
+                $Blade{V,G,B}($d(parityreverse(grade(V,B)) ? -one(T) : one(T),value(abs2_inv(B))*value(b)))
+            end
+            function $nv(b::$Blade{V,G,B,Any}) where {V,G,B}
+                $Blade{V,G,B}($d(parityreverse(grade(V,B)) ? -1 : 1,value(abs2_inv(B))*value(b)))
+            end
+        end
     end
     for Chain ∈ MSC
-        @eval $nv(a::$Chain) = $d(~a,value(abs2(a)))
+        @eval function $nv(a::$Chain)
+            r,v,q = ~a,abs2(a),diffvars(vectorspace(a))≠0
+            q&&typeof(v)<:TensorMixed ? Expr(:call,$(QuoteNode(d)),r,v) : $d(r,value(v))
+        end
     end
     for Term ∈ (:TensorTerm,MSC...,:MultiVector,:MultiGrade)
         @eval begin
