@@ -89,8 +89,8 @@ function declare_mutating_operations(M,F,set_val,SUB,MUL)
                                     T≠Any && (return true)
                                     _,_,Q,_ = symmetricmask(V,A,B)
                                     v *= getbasis(V,Z)
+                                    count_ones(Q)+order(v)>diffmode(V) && (return false)
                                 end
-                                count_ones(Q)+order(v)>diffmode(V) && (return false)
                             end
                             t && $s(m,typeof(V) <: Signature ? g ? $SUB(v) : v : $MUL(g,v),C,Dimension{N}())
                         end
@@ -476,13 +476,13 @@ Sandwich product: ω>>>η = ω⊖η⊖(~ω)
 
 ### Product Algebra Constructor
 
-function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj)
+function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj,PAR=false)
     if Field == Grassmann.Field
         declare_mutating_operations(:(MArray{Tuple{M},T,1,M}),Number,Expr,:-,:*)
     elseif Field ∈ (SymField,:(SymPy.Sym))
         declare_mutating_operations(:(SizedArray{Tuple{M},T,1,1}),Field,set_val,SUB,MUL)
     end
-    Field == :(SymPy.Sym) && for par ∈ (:parany,:parval,:parsym)
+    PAR && for par ∈ (:parany,:parval,:parsym)
         @eval $par = ($par...,$Field)
     end
     TF = Field ∉ Fields ? :Any : :T
@@ -522,8 +522,8 @@ function generate_product_algebra(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CON
         end
         *(a::F,b::Basis{V}) where {F<:$EF,V} = SBlade{V}(a,b)
         *(a::Basis{V},b::F) where {F<:$EF,V} = SBlade{V}(b,a)
-        *(a::F,b::MultiVector{T,V}) where {F<:$Field,T<:$Field,V} = MultiVector{promote_type(T,F),V}(broadcast($MUL,a,b.v))
-        *(a::MultiVector{T,V},b::F) where {F<:$Field,T<:$Field,V} = MultiVector{promote_type(T,F),V}(broadcast($MUL,a.v,b))
+        *(a::F,b::MultiVector{T,V}) where {F<:$Field,T,V} = MultiVector{promote_type(T,F),V}(broadcast($Sym.∏,a,b.v))
+        *(a::MultiVector{T,V},b::F) where {F<:$Field,T,V} = MultiVector{promote_type(T,F),V}(broadcast($Sym.∏,a.v,b))
         *(a::F,b::MultiGrade{V}) where {F<:$EF,V} = MultiGrade{V}(broadcast($MUL,a,b.v))
         *(a::MultiGrade{V},b::F) where {F<:$EF,V} = MultiGrade{V}(broadcast($MUL,a.v,b))
         ∧(a::$Field,b::$Field) = $MUL(a,b)
@@ -1273,7 +1273,13 @@ end
 
 generate_product_algebra()
 generate_product_algebra(Complex)
+generate_product_algebra(Rational{BigInt},:svec)
+for Big ∈ (BigFloat,BigInt)
+    generate_product_algebra(Big,:svec)
+    generate_product_algebra(Complex{Big},:svec)
+end
 generate_product_algebra(SymField,:svec,:($Sym.:∏),:($Sym.:∑),:($Sym.:-),:($Sym.conj))
+generate_product_algebra_svec(m,t) = generate_product_algebra(:($m.$t),:svec,:($m.:*),:($m.:+),:($m.:-),:($m.conj),true)
 
 const NSE = Union{Symbol,Expr,<:Real,<:Complex}
 
@@ -1435,6 +1441,7 @@ function ^(v::T,i::Integer) where T<:TensorTerm
 end
 
 function Base.:^(v::T,i::S) where {T<:TensorAlgebra{V},S<:Integer} where V
+    isone(i) && (return v)
     out = one(V)
     if i < 8 # optimal choice ?
         for k ∈ 1:i
