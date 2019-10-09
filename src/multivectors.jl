@@ -111,6 +111,7 @@ for Blade ∈ MSB
         $Blade{V}(v::T) where {V,T} = $Blade{V,0,Basis{V}(),T}(v)
         $Blade{V,G,B}(v::T) where {V,G,B,T} = $Blade{V,G,B,T}(v)
         $Blade(v,b::TensorTerm{V}) where V = $Blade{V}(v,b)
+        $Blade{V}(v,b::S) where S<:TensorMixed where V = v*b
         $Blade{V}(v::T,b::Basis{V,G}) where {V,G,T} = $Blade{V,G}(v,b)
         function $Blade{V,G}(v::T,b::Basis{V,G}) where {V,G,T}
             order(v)+order(b)>diffmode(V) ? zero(V) : $Blade{V,G,b,T}(v)
@@ -577,6 +578,12 @@ end
 @inline isscalar(t::MultiVector) = norm(t) ≈ scalar(t)
 @inline isscalar(t::MultiGrade) = norm(t) ≈ scalar(t)
 
+for Blade ∈ MSB
+    for T ∈ (Expr,Symbol)
+        @eval @inline Base.iszero(t::$Blade{V,G,B,$T} where {V,G,B}) = false
+    end
+end
+
 ## Adjoint
 
 import Base: adjoint # conj
@@ -587,7 +594,9 @@ adjoint(b::MultiGrade{V,G}) where {V,G} = MultiGrade{dual(V),G}(adjoint.(terms(b
 
 ## conversions
 
-@inline (V::Signature)(s::UniformScaling{T}) where T = SBlade{V}(T<:Bool ? (s.λ ? one(Int) : -(one(Int))) : s.λ,getbasis(V,(one(T)<<(ndims(V)-diffvars(V)))-1))
+for M ∈ (:Signature,:DiagonalForm)
+    @eval @inline (V::$M)(s::UniformScaling{T}) where T = SBlade{V}(T<:Bool ? (s.λ ? one(Int) : -(one(Int))) : s.λ,getbasis(V,(one(T)<<(ndims(V)-diffvars(V)))-1))
+end
 
 @pure function (W::Signature)(b::Basis{V}) where V
     V==W && (return b)
