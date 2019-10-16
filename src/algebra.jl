@@ -19,14 +19,11 @@ const ExprField = Union{Expr,Symbol}
 
 ## mutating operations
 
-add_val(set,expr,val,OP) = Expr(OP∉(:-,:+) ? :.= : set,expr,OP∉(:-,:+) ? Expr(:.,OP,Expr(:tuple,expr,val)) : val)
 
 const Sym = :DirectSum
 const SymField = Any
 
-set_val(set,expr,val) = Expr(:(=),expr,set≠:(=) ? Expr(:call,:($Sym.:∑),expr,val) : val)
-
-derive(n::N,b) where N<:Number = zero(typeof(n))
+@pure derive(n::N,b) where N<:Number = zero(typeof(n))
 derive(n,b,a,t) = t ? (a,derive(n,b)) : (derive(n,b),a)
 #derive(n,b,a::T,t) where T<:TensorAlgebra = t ? (a,derive(n,b)) : (derive(n,b),a)
 
@@ -84,6 +81,10 @@ for M ∈ (:Signature,:DiagonalForm)
     @eval @pure loworder(V::$M{N,M,S,D,O}) where {N,M,S,D,O} = O≠0 ? $M{N,M,S,D,O-1}() : V
 end
 @pure loworder(::SubManifold{N,M,S}) where {N,M,S} = SubManifold{N,loworder(M),S}()
+
+add_val(set,expr,val,OP) = Expr(OP∉(:-,:+) ? :.= : set,expr,OP∉(:-,:+) ? Expr(:.,OP,Expr(:tuple,expr,val)) : val)
+
+set_val(set,expr,val) = Expr(:(=),expr,set≠:(=) ? Expr(:call,:($Sym.:∑),expr,val) : val)
 
 function generate_mutators(M,F,set_val,SUB,MUL)
     for (op,set) ∈ ((:add,:(+=)),(:set,:(=)))
@@ -170,22 +171,26 @@ end
 
 # Hodge star ★
 
-const complementright = ⋆
+const complementrighthodge = ⋆
+const complementright = !
 
 ## complement
 
-export complementleft, complementright, ⋆
+export complementleft, complementright, ⋆, complementlefthodge, complementrighthodge
 
 for side ∈ (:left,:right)
-    c = Symbol(:complement,side)
-    p = Symbol(:parity,side)
-    @eval @pure function $c(b::Basis{V,G,B}) where {V,G,B}
-        d = getbasis(V,complement(ndims(V),B,diffvars(V),hasinf(V)+hasorigin(V)))
-        mixedmode(V)<0 && throw(error("Complement for mixed tensors is undefined"))
-        typeof(V)<:Signature ? ($p(b) ? SBlade{V}(-value(d),d) : d) : SBlade{V}($p(b)*value(d),d)
-    end
-    for Blade ∈ MSB
-        @eval $c(b::$Blade) = value(b)≠0 ? value(b)*$c(basis(b)) : g_zero(vectorspace(b))
+    c,p = Symbol(:complement,side),Symbol(:parity,side)
+    h,pg,pn = Symbol(c,:hodge),Symbol(p,:hodge),Symbol(p,:null)
+    for (c,p) ∈ ((c,p),(h,pg))
+        @eval @pure function $c(b::Basis{V,G,B}) where {V,G,B}
+            d = getbasis(V,complement(ndims(V),B,diffvars(V),$(c≠h ? 0 : :(hasinf(V)+hasorigin(V)))))
+            mixedmode(V)<0 && throw(error("Complement for mixed tensors is undefined"))
+            v = $(c≠h ? :($pn(V,B,value(d))) : :(value(d)))
+            typeof(V)<:Signature ? ($p(b) ? SBlade{V}(-v,d) : isone(v) ? d : SBlade{V}(v,d)) : SBlade{V}($p(b)*v,d)
+        end
+        for B ∈ MSB
+            @eval $c(b::$B) = value(b)≠0 ? value(b)*$c(basis(b)) : g_zero(vectorspace(b))
+        end
     end
 end
 
@@ -193,13 +198,13 @@ end
     complementright(ω::TensorAlgebra)
 
 Grassmann-Poincare-Hodge complement: ⋆ω = ω∗I
-""" complementright
+""" complementrighthodge
 
 @doc """
     complementleft(ω::TensorAlgebra)
 
 Grassmann-Poincare left complement: ⋆'ω = I∗'ω
-""" complementleft
+""" complementlefthodge
 
 ## reverse
 
@@ -769,44 +774,48 @@ function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj
         end
     end
     for side ∈ (:left,:right)
-        c = Symbol(:complement,side)
-        p = Symbol(:parity,side)
-        for Chain ∈ MSC
-            @eval begin
-                function $c(b::$Chain{T,V,G}) where {T<:$Field,V,G}
-                    mixedmode(V)<0 && throw(error("Complement for mixed tensors is undefined"))
-                    $(insert_expr((:N,:ib,:D,:P),VEC)...)
-                    out = zeros($VEC(N,G,T))
-                    D = diffvars(V)
-                    for k ∈ 1:binomial(N,G)
-                        @inbounds val = b.v[k]
-                        if val≠0
-                            @inbounds p = $p(V,ib[k])
-                            v = typeof(V)<:Signature ? (p ? $SUB(val) : val) : p*val
-                            @inbounds setblade!(out,v,complement(N,ib[k],D,P),Dimension{N}())
+        c,p = Symbol(:complement,side),Symbol(:parity,side)
+        h,pg,pn = Symbol(c,:hodge),Symbol(p,:hodge),Symbol(p,:null)
+        for (c,p) ∈ ((c,p),(h,pg))
+            for Chain ∈ MSC
+                @eval begin
+                    function $c(b::$Chain{T,V,G}) where {T<:$Field,V,G}
+                        mixedmode(V)<0 && throw(error("Complement for mixed tensors is undefined"))
+                        $(insert_expr((:N,:ib,:D,:P),VEC)...)
+                        out = zeros($VEC(N,G,T))
+                        D = diffvars(V)
+                        for k ∈ 1:binomial(N,G)
+                            @inbounds val = b.v[k]
+                            if val≠0
+                                @inbounds p = $p(V,ib[k])
+                                v = $(c≠h ? :($pn(V,ib[k],val)) : :val)
+                                v = typeof(V)<:Signature ? (p ? $SUB(v) : v) : p*v
+                                @inbounds setblade!(out,v,complement(N,ib[k],D,P),Dimension{N}())
+                            end
                         end
+                        return $Chain{T,V,N-G}(out)
                     end
-                    return $Chain{T,V,N-G}(out)
                 end
             end
-        end
-        @eval begin
-            function $c(m::MultiVector{T,V}) where {T<:$Field,V}
-                mixedmode(V)<0 && throw(error("Complement for mixed tensors is undefined"))
-                $(insert_expr((:N,:bs,:bn,:P),VEC)...)
-                out = zeros($VEC(N,T))
-                D = diffvars(V)
-                for g ∈ 1:N+1
-                    ib = indexbasis(N,g-1)
-                    @inbounds for i ∈ 1:bn[g]
-                        @inbounds val = m.v[bs[g]+i]
-                        if val≠0
-                            v = typeof(V)<:Signature ? ($p(V,ib[i]) ? $SUB(val) : val) : $p(V,ib[i])*val
-                            @inbounds setmulti!(out,v,complement(N,ib[i],D,P),Dimension{N}())
+            @eval begin
+                function $c(m::MultiVector{T,V}) where {T<:$Field,V}
+                    mixedmode(V)<0 && throw(error("Complement for mixed tensors is undefined"))
+                    $(insert_expr((:N,:bs,:bn,:P),VEC)...)
+                    out = zeros($VEC(N,T))
+                    D = diffvars(V)
+                    for g ∈ 1:N+1
+                        ib = indexbasis(N,g-1)
+                        @inbounds for i ∈ 1:bn[g]
+                            @inbounds val = m.v[bs[g]+i]
+                            if val≠0
+                                v = $(c≠h ? :($pn(V,ib[i],val)) : :val)
+                                v = typeof(V)<:Signature ? ($p(V,ib[i]) ? $SUB(v) : v) : $p(V,ib[i])*v
+                                @inbounds setmulti!(out,v,complement(N,ib[i],D,P),Dimension{N}())
+                            end
                         end
                     end
+                    return MultiVector{T,V}(out)
                 end
-                return MultiVector{T,V}(out)
             end
         end
     end
@@ -933,7 +942,7 @@ function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj
                             end
                         end
                     end
-                    return MultiVector{t,V,2^N}(out)
+                    return MultiVector{t,V}(out)
                 end
             end
         end
@@ -1186,7 +1195,7 @@ function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj
                     elseif TA <: TensorMixed
                         g = grade(A)
                         r = binomsum(N,g)
-                        @inbounds out[r+1:r+binomial(N,g)] += value(A,$VEC(N,g,t))
+                        @inbounds $(add_val(eop,:(out[r+1:r+binomial(N,g)]),:(value(A,$VEC(N,g,t))),bop))
                     end
                 end
                 return MultiVector{t,V}(out)
@@ -1207,7 +1216,7 @@ function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj
                     elseif TB <: TensorMixed
                         g = grade(B)
                         r = binomsum(N,g)
-                        @inbounds $(Expr(eop,:(out[r+1:r+binomial(N,g)]),:(value(B,$VEC(N,g,t)))))
+                        @inbounds $(add_val(eop,:(out[r+1:r+binomial(N,g)]),:(value(B,$VEC(N,g,t))),bop))
                     end
                 end
                 return MultiVector{t,V}(out)
@@ -1307,13 +1316,13 @@ function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj
                 function $op(a::$Chain{T,V,G},b::MultiVector{S,V}) where {T<:$Field,V,G,S}
                     $(insert_expr((:N,:t,:r,:bng),VEC)...)
                     out = convert($VEC(N,t),$(bcast(bop,:(copy(value(b,$VEC(N,t))),))))
-                    @inbounds out[r+1:r+bng] += value(a,$VEC(N,G,t))
+                    @inbounds $(add_val(eop,:(out[r+1:r+bng]),:(value(a,$VEC(N,G,t))),bop))
                     return MultiVector{t,V}(out)
                 end
                 function $op(a::MultiVector{T,V},b::$Chain{S,V,G}) where {T<:$Field,V,G,S}
                     $(insert_expr((:N,:t,:r,:bng),VEC)...)
                     out = copy(value(a,$VEC(N,t)))
-                    @inbounds $(Expr(eop,:(out[r+1:r+bng]),:(value(b,$VEC(N,G,t)))))
+                    @inbounds $(add_val(eop,:(out[r+1:r+bng]),:(value(b,$VEC(N,G,t))),bop))
                     return MultiVector{t,V}(out)
                 end
             end

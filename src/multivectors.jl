@@ -109,6 +109,7 @@ for Blade ∈ MSB
         @pure $Blade(b::Basis{V,G}) where {V,G} = $Blade{V}(b)
         @pure $Blade{V}(b::Basis{V,G}) where {V,G} = $Blade{V,G,b,Int}(1)
         $Blade{V}(v::T) where {V,T} = $Blade{V,0,Basis{V}(),T}(v)
+        $Blade{V}(v::TensorTerm{V}) where V = v
         $Blade{V,G,B}(v::T) where {V,G,B,T} = $Blade{V,G,B,T}(v)
         $Blade(v,b::TensorTerm{V}) where V = $Blade{V}(v,b)
         $Blade{V}(v,b::S) where S<:TensorMixed where V = v*b
@@ -594,9 +595,16 @@ adjoint(b::MultiGrade{V,G}) where {V,G} = MultiGrade{dual(V),G}(adjoint.(terms(b
 
 ## conversions
 
-for M ∈ (:Signature,:DiagonalForm)
-    @eval @inline (V::$M)(s::UniformScaling{T}) where T = SBlade{V}(T<:Bool ? (s.λ ? one(Int) : -(one(Int))) : s.λ,getbasis(V,(one(T)<<(ndims(V)-diffvars(V)))-1))
+for M ∈ (:Signature,:DiagonalForm,:SubManifold)
+    @eval begin
+        @inline (V::$M)(s::UniformScaling{T}) where T = SBlade{V}(T<:Bool ? (s.λ ? one(Int) : -(one(Int))) : s.λ,getbasis(V,(one(T)<<(ndims(V)-diffvars(V)))-1))
+        (W::$M)(b::SBlade) = SBlade{W}(value(b),W(basis(b)))
+        (W::$M)(b::MBlade) = MBlade{W}(value(b),W(basis(b)))
+    end
 end
+
+#@pure supblade(N,S,B) = bladeindex(N,expandbits(N,S,B))
+#@pure supmulti(N,S,B) = basisindex(N,expandbits(N,S,B))
 
 @pure function (W::Signature)(b::Basis{V}) where V
     V==W && (return b)
@@ -621,8 +629,14 @@ end
         throw(error("arbitrary Manifold intersection not yet implemented."))
     end
 end
-(W::Signature)(b::SBlade) = SBlade{W}(value(b),W(basis(b)))
-(W::Signature)(b::MBlade) = MBlade{W}(value(b),W(basis(b)))
+@pure function (W::SubManifold{M,V,S})(b::Basis{V,G,B}) where {M,V,S,G,B}
+    count_ones(B&S)==G ? getbasis(W,lowerbits(ndims(V),S,B)) : g_zero(W)
+end
+
+@pure choicevec(M,G,T) = T ∈ (Any,BigFloat,BigInt,Complex{BigFloat},Rational{BigInt},Complex{BigInt}) ? svec(M,G,T) : mvec(M,G,T)
+@pure choicevec(M,T) = T ∈ (Any,BigFloat,BigInt,Complex{BigFloat},Rational{BigInt},Complex{BigInt}) ? svec(M,T) : mvec(M,T)
+
+@pure subindex(::SubManifold{M,V,S} where {M,V}) where S = S::UInt
 
 for Chain ∈ MSC
     @eval begin
@@ -632,13 +646,20 @@ for Chain ∈ MSC
             WC,VC = mixedmode(W),mixedmode(V)
             #if ((C1≠C2)&&(C1≥0)&&(C2≥0))
             #    return V0
-            N,M = ndims(V),ndims(W)
-            out = zeros(mvec(M,G,T))
+            N,M,D = ndims(V),ndims(W),diffvars(V)
+            out = zeros(choicevec(M,G,valuetype(b)))
             ib = indexbasis(N,G)
             for k ∈ 1:length(ib)
                 @inbounds if b[k] ≠ 0
                     if WC<0 && VC≥0
-                        @inbounds setblade!(out,b[k],VC>0 ? ib[k]<<N : ib[k],Dimension{M}())
+                        @inbounds ibk = ib[k]
+                        if D≠0
+                            A,B = ibk&(UInt(1)<<(N-D)-1),ibk&((UInt(1)<<D-1)<<(N-D))
+                            ibk = VC>0 ? (A<<D)|(B<<N) : A|(B<<(N-D))
+                        else
+                            ibk = VC>0 ? ibk<<N : ibk
+                        end
+                        @inbounds setblade!(out,b[k],ibk,Dimension{M}())
                     elseif WC≥0 && VC≥0
                         @inbounds setblade!(out,b[k],ib[k],Dimension{M}())
                     else
@@ -648,7 +669,21 @@ for Chain ∈ MSC
             end
             return $Chain{T,W,G}(out)
         end
-
+        function (W::SubManifold{M,V,S})(b::$Chain{T,V,1}) where {M,V,S,T}
+            $Chain{T,W,1}(b.v[indices(subindex(W),ndims(V))])
+        end
+        function (W::SubManifold{M,V,S})(b::$Chain{T,V,G}) where {M,V,S,T,G}
+            out,N = zeros(choicevec(M,G,valuetype(b))),ndims(V)
+            ib = indexbasis(N,G)
+            for k ∈ 1:length(ib)
+                @inbounds if b[k] ≠ 0
+                    @inbounds if count_ones(ib[k]&S) == G
+                        @inbounds setblade!(out,b[k],lowerbits(N,S,ib[k]),Dimension{M}())
+                    end
+                end
+            end
+            return $Chain{T,W,G}(out)
+        end
     end
 end
 
@@ -658,8 +693,8 @@ function (W::Signature)(m::MultiVector{T,V}) where {T,V}
     WC,VC = mixedmode(W),mixedmode(V)
     #if ((C1≠C2)&&(C1≥0)&&(C2≥0))
     #    return V0
-    N,M = ndims(V),ndims(W)
-    out = zeros(mvec(M,T))
+    N,M,D = ndims(V),ndims(W),diffvars(V)
+    out = zeros(choicevec(M,valuetype(m)))
     bs = binomsum_set(N)
     for i ∈ 1:N+1
         ib = indexbasis(N,i-1)
@@ -667,7 +702,14 @@ function (W::Signature)(m::MultiVector{T,V}) where {T,V}
             @inbounds s = k+bs[i]
             @inbounds if m.v[s] ≠ 0
                 if WC<0 && VC≥0
-                    @inbounds setmulti!(out,m.v[s],VC>0 ? ib[k]<<N : ib[k],Dimension{M}())
+                    @inbounds ibk = ib[k]
+                    if D≠0
+                        A,B = ibk&(UInt(1)<<(N-D)-1),ibk&((UInt(1)<<D-1)<<(N-D))
+                        ibk = VC>0 ? (A<<D)|(B<<N) : A|(B<<(N-D))
+                    else
+                        ibk = VC>0 ? ibk<<N : ibk
+                    end
+                    @inbounds setmulti!(out,m.v[s],ibk,Dimension{M}())
                 elseif WC≥0 && VC≥0
                     @inbounds setmulti!(out,m.v[s],ib[k],Dimension{M}())
                 else
@@ -679,6 +721,22 @@ function (W::Signature)(m::MultiVector{T,V}) where {T,V}
     return MultiVector{T,W}(out)
 end
 
+function (W::SubManifold{M,V,S})(m::MultiVector{T,V}) where {M,V,S,T}
+    out,N = zeros(choicevec(M,valuetype(m))),ndims(V)
+    bs = binomsum_set(N)
+    for i ∈ 1:N+1
+        ib = indexbasis(N,i-1)
+        for k ∈ 1:length(ib)
+            @inbounds s = k+bs[i]
+            @inbounds if m.v[s] ≠ 0
+                @inbounds if count_ones(ib[k]&S) == i-1
+                    @inbounds setmulti!(out,m.v[s],lowerbits(N,S,ib[k]),Dimension{M}())
+                end
+            end
+        end
+    end
+    return MultiVector{T,W}(out)
+end
 
 # QR compatibility
 
