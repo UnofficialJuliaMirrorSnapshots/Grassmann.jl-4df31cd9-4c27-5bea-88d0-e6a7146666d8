@@ -410,20 +410,19 @@ end
 # ParaAlgebra
 
 using Leibniz
-import Leibniz: ∂, d, ∇
-export ∇, ∂, d, ↑, ↓
+import Leibniz: ∂, d, ∇, Δ
+export ∇, Δ, ∂, d, ↑, ↓
 
 generate_products(:(Leibniz.Operator),:svec)
 
-@pure function (W::Signature{N})(d::Leibniz.Derivation{T,O}) where {N,T,O}
-    C = mixedmode(W)<0
-    V = diffvars(W)≠0 ? W : tangent(W,O<2 ? 2 : O,C ? Int(ndims(W)/2) : ndims(W))
-    G,D = grade(V),diffvars(V)==1
+@pure function (V::Signature{N})(d::Leibniz.Derivation{T,O}) where {N,T,O}
+    (O<1||diffvars(V)==0) && (return SChain{Int,V,1}(ones(Int,ndims(V))))
+    G,D,C = grade(V),diffvars(V)==1,mixedmode(V)<0
     G2 = (C ? Int(G/2) : G)-1
     ∇ = sum([getbasis(V,1<<(D ? G : k+G))*getbasis(V,1<<k) for k ∈ 0:G2])
     isone(O) && (return ∇)
     x = (∇⋅∇)^div(isodd(O) ? O-1 : O,2)
-    isodd(O) ? sum([x*(getbasis(V,1<<(k+G))*getbasis(V,1<<k)) for k ∈ 0:G2]) : x
+    isodd(O) ? sum([(x*getbasis(V,1<<(k+G)))*getbasis(V,1<<k) for k ∈ 0:G2]) : x
 end
 
 ∂(ω::T) where T<:TensorAlgebra{V} where V = ω⋅V(∇)
@@ -442,6 +441,16 @@ function ↑(ω::T) where T<:TensorAlgebra{V} where V
         (hasinf(PV) ? G.v∞ : G.v∅)*(ω2-1)*iω2 + 2*iω2*ω
     end
 end
+function ↑(ω,b)
+    ω2 = ω^2
+    iω2 = inv(ω2+1)
+    2*iω2*ω + (ω2-1)*iω2*b
+end
+function ↑(ω,p,m)
+    ω2 = ω^2
+    iω2 = inv(ω2+1)
+    2*iω2*ω + (ω2-1)*iω2*p + (ω2+1)*iω2*m
+end
 
 function ↓(ω::T) where T<:TensorAlgebra{V} where V
     PV = ℙ(V)
@@ -452,6 +461,67 @@ function ↓(ω::T) where T<:TensorAlgebra{V} where V
         b = hasinf(PV) ? G.v∞ : G.v∅
         ((ω∧b)*b)/(1-b⋅ω)
     end
+end
+↓(ω,b) = ((b∧ω)*b)/(1-ω⋅b)
+↓(ω,∞,∅) = (m=∞∧∅;inv(m)*(m∧ω)/(-ω⋅∞))
+
+## skeleton / subcomplex
+
+export skeleton, 𝒫, collapse, subcomplex, chain, path
+
+absym(t) = abs(t)
+absym(t::Basis) = t
+absym(t::T) where T<:TensorTerm{V,G} where {V,G} = SBlade{V,G}(absym(value(t)),basis(t))
+absym(t::SChain{T,V,G}) where {T,V,G} = SChain{T,V,G}(absym.(value(t)))
+absym(t::MChain{T,V,G}) where {T,V,G} = MChain{T,V,G}(absym.(value(t)))
+absym(t::MultiVector{T,V}) where {T,V} = MultiVector{T,V}(absym.(value(t)))
+
+collapse(a,b) = a⋅absym(∂(b))
+
+function chain(t::S,::Val{T}=Val{true}()) where S<:TensorTerm{V} where {V,T}
+    N,B,v = ndims(V),bits(basis(t)),value(t)
+    C = symmetricmask(V,B,B)[1]
+    G = count_ones(C)
+    G < 2 && (return t)
+    out,ind = zeros(mvec(N,2,Int)), indices(C,N)
+    if T || G == 2
+        setblade!(out,G==2 ? v : -v,bit2int(indexbits(N,[ind[1],ind[end]])),Dimension{N}())
+    end
+    for k ∈ 2:G
+        setblade!(out,v,bit2int(indexbits(N,ind[[k-1,k]])),Dimension{N}())
+    end
+    return MChain{Int,V,2}(out)
+end
+path(t) = chain(t,Val{false}())
+
+𝒫(t::T) where T<:TensorAlgebra = skeleton(t,Val{false}())
+subcomplex(x::S,v=Val{true}()) where S<:TensorAlgebra = skeleton(absym(∂(x)),v)
+function skeleton(x::S,v::Val{T}=Val{true}()) where S<:TensorTerm{V} where {V,T}
+    B = bits(basis(x))
+    count_ones(symmetricmask(V,B,B)[1])>0 ? absym(x)+skeleton(absym(∂(x)),v) : (T ? g_zero(V) : absym(x))
+end
+function skeleton(x::S,v::Val{T}=Val{true}()) where {S<:TensorMixed{Q,V} where Q} where {V,T}
+    N,G,g = ndims(V),grade(x),0
+    ib = indexbasis(N,G)
+    for k ∈ 1:binomial(N,G)
+        if !iszero(x.v[k]) && (!T || count_ones(symmetricmask(V,ib[k],ib[k])[1])>0)
+            g += skeleton(SBlade{V,G}(x.v[k],getbasis(V,ib[k])),v)
+        end
+    end
+    return g
+end
+function skeleton(x::MultiVector{S,V} where S,v::Val{T}=Val{true}()) where {V,T}
+    N,g = ndims(V),0
+    for i ∈ 0:N
+        R = binomsum(N,i)
+        ib = indexbasis(N,i)
+        for k ∈ 1:binomial(N,i)
+            if !iszero(x.v[k+R]) && (!T || count_ones(symmetricmask(V,ib[k],ib[k])[1])>0)
+                g += skeleton(SBlade{V,i}(x.v[k+R],getbasis(V,ib[k])),v)
+            end
+        end
+    end
+    return g
 end
 
 function __init__()
@@ -479,37 +549,49 @@ function __init__()
     @require GaloisFields="8d0d7f98-d412-5cd4-8397-071c807280aa" generate_algebra(:GaloisFields,:AbstractGaloisField)
     @require LightGraphs="093fc24a-ae57-5d10-9952-331d41423f4d" begin
         function LightGraphs.SimpleDiGraph(x::T,g=LightGraphs.SimpleDiGraph(grade(V))) where T<:TensorTerm{V} where V
-           ind = (signbit(value(x)) ? reverse : identity)(Grassmann.indices(basis(x)))
-           grade(x) == 2 ? LightGraphs.add_edge!(g,ind...) : graph(∂(x),g)
+           ind = (signbit(value(x)) ? reverse : identity)(indices(basis(x)))
+           grade(x) == 2 ? LightGraphs.add_edge!(g,ind...) : LightGraphs.SimpleDiGraph(∂(x),g)
            return g
         end
         function LightGraphs.SimpleDiGraph(x::S,g=LightGraphs.SimpleDiGraph(grade(V))) where {S<:TensorMixed{T,V} where T} where V
-            graph(∂(x),g)
-        end
-        function graph(x::S,g=LightGraphs.SimpleDiGraph(grade(V))) where {S<:TensorMixed{T,V} where T} where V
             N,G = ndims(V),grade(x)
-            ib = Grassmann.indexbasis(N,G)
-            for k ∈ 1:Grassmann.binomial(N,G)
+            ib = indexbasis(N,G)
+            for k ∈ 1:binomial(N,G)
                 if !iszero(x.v[k])
-                    B = Grassmann.symmetricmask(V,ib[k],ib[k])[1]
+                    B = symmetricmask(V,ib[k],ib[k])[1]
                     count_ones(B) ≠1 && LightGraphs.SimpleDiGraph(x.v[k]*getbasis(V,B),g)
                 end
             end
             return g
         end
-        function graph(x::MultiVector{T,V} where T,g=LightGraphs.SimpleDiGraph(grade(V))) where V
+        function LightGraphs.SimpleDiGraph(x::MultiVector{T,V} where T,g=LightGraphs.SimpleDiGraph(grade(V))) where V
            N = ndims(V)
            for i ∈ 2:N
-                R = Grassmann.binomsum(N,i)
-                ib = Grassmann.indexbasis(N,i)
-                for k ∈ 1:Grassmann.binomial(N,i)
+                R = binomsum(N,i)
+                ib = indexbasis(N,i)
+                for k ∈ 1:binomial(N,i)
                     if !iszero(x.v[k+R])
-                        B = Grassmann.symmetricmask(V,ib[k],ib[k])[1]
+                        B = symmetricmask(V,ib[k],ib[k])[1]
                         count_ones(B) ≠ 1 && LightGraphs.SimpleDiGraph(x.v[k+R]*getbasis(V,B),g)
                     end
                 end
             end
             return g
+        end
+    end
+    #@require GraphPlot="a2cc645c-3eea-5389-862e-a155d0052231"
+    @require Compose="a81c6b42-2e10-5240-aca2-a61377ecd94b" begin
+        import LightGraphs, GraphPlot, Cairo
+        viewer = Base.Process(`$(haskey(ENV,"VIEWER") ? ENV["VIEWER"] : "xdg-open") simplex.pdf`,Ptr{Nothing}())
+        function Compose.draw(img,x::T,l=layout=GraphPlot.circular_layout) where T<:TensorAlgebra
+            Compose.draw(img,GraphPlot.gplot(LightGraphs.SimpleDiGraph(x),layout=l,nodelabel=collect(1:grade(vectorspace(x)))))
+        end
+        function graph(x,n="simplex.pdf",l=GraphPlot.circular_layout)
+            cmd = `$(haskey(ENV,"VIEWER") ? ENV["VIEWER"] : "xdg-open") $n`
+            global viewer
+            viewer.cmd == cmd && kill(viewer)
+            Compose.draw(Compose.PDF(n,16Compose.cm,16Compose.cm),x,l)
+            viewer = run(cmd,(devnull,stdout,stderr),wait=false)
         end
     end
     @require GeometryTypes="4d00f742-c7ba-57c2-abde-4428a4b178cb" begin
@@ -519,6 +601,8 @@ function __init__()
         Base.convert(::Type{GeometryTypes.Point},t::MChain{T,V,G}) where {T,V,G} = G == 1 ? GeometryTypes.Point(value(vector(t))) : GeometryTypes.Point(zeros(T,ndims(V))...)
         Base.convert(::Type{GeometryTypes.Point},t::SChain{T,V,G}) where {T,V,G} = G == 1 ? GeometryTypes.Point(value(vector(t))) : GeometryTypes.Point(zeros(T,ndims(V))...)
         GeometryTypes.Point(t::T) where T<:TensorAlgebra = convert(GeometryTypes.Point,t)
+        export points
+        points(f,V=identity;r=-2π:0.0001:2π) = [GeometryTypes.Point(V(Grassmann.vector(f(t)))) for t ∈ r]
     end
     #@require AbstractPlotting="537997a7-5e4e-5d89-9595-2241ea00577e" nothing
     #@require Makie="ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a" nothing

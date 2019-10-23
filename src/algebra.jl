@@ -535,6 +535,12 @@ Sandwich product: ω>>>η = ω⊖η⊖(~ω)
 """
 >>>(x::TensorAlgebra{V},y::TensorAlgebra{V}) where V = x * y * ~x
 
+## linear algebra
+
+export ⟂, ∥
+
+∥(a,b) = iszero(a∧b)
+
 ### Product Algebra Constructor
 
 function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj,PAR=false)
@@ -1313,13 +1319,13 @@ function generate_products(Field=Field,VEC=:mvec,MUL=:*,ADD=:+,SUB=:-,CONJ=:conj
                     end
                     return MChain{t,V,G}(out)
                 end
-                function $op(a::$Chain{T,V,G},b::MultiVector{S,V}) where {T<:$Field,V,G,S}
+                function $op(a::$Chain{T,V,G},b::MultiVector{S,V}) where {T<:$Field,V,G,S<:$Field}
                     $(insert_expr((:N,:t,:r,:bng),VEC)...)
                     out = convert($VEC(N,t),$(bcast(bop,:(copy(value(b,$VEC(N,t))),))))
                     @inbounds $(add_val(eop,:(out[r+1:r+bng]),:(value(a,$VEC(N,G,t))),bop))
                     return MultiVector{t,V}(out)
                 end
-                function $op(a::MultiVector{T,V},b::$Chain{S,V,G}) where {T<:$Field,V,G,S}
+                function $op(a::MultiVector{T,V},b::$Chain{S,V,G}) where {T<:$Field,V,G,S<:$Field}
                     $(insert_expr((:N,:t,:r,:bng),VEC)...)
                     out = copy(value(a,$VEC(N,t)))
                     @inbounds $(add_val(eop,:(out[r+1:r+bng]),:(value(b,$VEC(N,G,t))),bop))
@@ -1595,14 +1601,25 @@ for (nv,d) ∈ ((:inv,:/),(:inv_rat,://))
             end
             throw(error("inv($m) is undefined"))
         end
+        function $nv(m::MultiVector{Any,V}) where V
+            rm = ~m
+            d = rm*m
+            fd = $Sym.:∑([$Sym.:∏(a,a) for a ∈ value(d)]...)
+            sd = scalar(d)
+            $Sym.:∏(value(sd),value(sd)) == fd && (return $d(rm,sd))
+            for k ∈ 1:ndims(V)
+                @inbounds $Sym.:∑([$Sym.:∏(a,a) for a ∈ value(d[k])]...) == fd && (return $d(rm,d(k)))
+            end
+            throw(error("inv($m) is undefined"))
+        end
     end
     for Blade ∈ MSB
         @eval begin
             function $nv(b::$Blade{V,G,B,T}) where {V,G,B,T}
-                $Blade{V,G,B}($d(parityreverse(grade(V,B)) ? -one(T) : one(T),value(abs2_inv(B))*value(b)))
+                $Blade{V,G,B}($d(parityreverse(grade(V,B)) ? -one(T) : one(T),value(abs2_inv(B)*value(b))))
             end
             function $nv(b::$Blade{V,G,B,Any}) where {V,G,B}
-                $Blade{V,G,B}($d(parityreverse(grade(V,B)) ? -1 : 1,value(abs2_inv(B))*value(b)))
+                $Blade{V,G,B}($Sym.$d(parityreverse(grade(V,B)) ? -1 : 1,value($Sym.:∏(abs2_inv(B),value(b)))))
             end
         end
     end
@@ -1617,10 +1634,15 @@ for (nv,d) ∈ ((:inv,:/),(:inv_rat,://))
     end
 end
 
-function generate_inverses(Sym,T)
+function generate_inverses(Mod,T)
     for (nv,d,ds) ∈ ((:inv,:/,:($Sym.:/)),(:inv_rat,://,:($Sym.://)))
         for Term ∈ (:TensorTerm,MSC...,:MultiVector,:MultiGrade)
-            @eval $d(a::S,b::T) where {S<:$Term,T<:$Sym.$T} = a*$ds(1,b)
+            @eval $d(a::S,b::T) where {S<:$Term,T<:$Mod.$T} = a*$ds(1,b)
+        end
+        for Blade ∈ MSB
+            @eval function $nv(b::$Blade{V,G,B,$Mod.$T}) where {V,G,B}
+                $Blade{V,G,B}($Mod.$d(parityreverse(grade(V,B)) ? -1 : 1,value($Sym.:∏(abs2_inv(B),value(b)))))
+            end
         end
     end
 end
