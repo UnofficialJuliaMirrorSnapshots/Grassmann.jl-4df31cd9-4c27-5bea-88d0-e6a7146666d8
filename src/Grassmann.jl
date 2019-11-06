@@ -3,9 +3,9 @@ module Grassmann
 #   This file is part of Grassmann.jl. It is licensed under the GPL license
 #   Grassmann Copyright (C) 2019 Michael Reed
 
-using Combinatorics, StaticArrays, Requires
+using Combinatorics, StaticArrays, SparseArrays
 using ComputedFieldTypes, AbstractLattices
-using DirectSum, AbstractTensors
+using DirectSum, AbstractTensors, Requires
 
 export vectorspace, ⊕, ℝ, @V_str, @S_str, @D_str, Signature,DiagonalForm,SubManifold, value
 import DirectSum: hasinf, hasorigin, mixedmode, dual, value, vectorspace, V0, ⊕, pre, vsn
@@ -428,17 +428,15 @@ end
 ∂(ω::T) where T<:TensorAlgebra{V} where V = ω⋅V(∇)
 d(ω::T) where T<:TensorAlgebra{V} where V = V(∇)∧ω
 
-@pure ℙ(V) = ((i,o)=(hasinf(V),hasorigin(V));i+o==2 ? V : (i+o==0 ? S"∞∅"⊕V : V))
-
 function ↑(ω::T) where T<:TensorAlgebra{V} where V
-    PV = ℙ(V)
-    G = Λ(PV)
-    return if hasinf(PV) && hasorigin(PV)
+    !(hasinf(V)||hasorigin(V)) && (return ω)
+    G = Λ(V)
+    return if hasinf(V) && hasorigin(V)
         ((G.v∞/2)*ω^2+G.v∅)+ω
     else
         ω2 = ω^2
         iω2 = inv(ω2+1)
-        (hasinf(PV) ? G.v∞ : G.v∅)*(ω2-1)*iω2 + 2*iω2*ω
+        (hasinf(V) ? G.v∞ : G.v∅)*(ω2-1)*iω2 + 2*iω2*ω
     end
 end
 function ↑(ω,b)
@@ -453,12 +451,12 @@ function ↑(ω,p,m)
 end
 
 function ↓(ω::T) where T<:TensorAlgebra{V} where V
-    PV = ℙ(V)
-    G = Λ(PV)
-    return if hasinf(PV) && hasorigin(PV)
+    !(hasinf(V)||hasorigin(V)) && (return ω)
+    G = Λ(V)
+    return if hasinf(V) && hasorigin(V)
         inv(G.v∞∅)*(G.v∞∅∧ω)/(-ω⋅G.v∞)
     else
-        b = hasinf(PV) ? G.v∞ : G.v∅
+        b = hasinf(V) ? G.v∞ : G.v∅
         ((ω∧b)*b)/(1-b⋅ω)
     end
 end
@@ -494,8 +492,9 @@ function chain(t::S,::Val{T}=Val{true}()) where S<:TensorTerm{V} where {V,T}
 end
 path(t) = chain(t,Val{false}())
 
-𝒫(t::T) where T<:TensorAlgebra = skeleton(t,Val{false}())
-subcomplex(x::S,v=Val{true}()) where S<:TensorAlgebra = skeleton(absym(∂(x)),v)
+@inline (::Leibniz.Derivation)(x::T,v=Val{true}()) where T<:TensorAlgebra = skeleton(x,v)
+𝒫(t::T) where T<:TensorAlgebra = Δ(t,Val{false}())
+subcomplex(x::S,v=Val{true}()) where S<:TensorAlgebra = Δ(absym(∂(x)),v)
 function skeleton(x::S,v::Val{T}=Val{true}()) where S<:TensorTerm{V} where {V,T}
     B = bits(basis(x))
     count_ones(symmetricmask(V,B,B)[1])>0 ? absym(x)+skeleton(absym(∂(x)),v) : (T ? g_zero(V) : absym(x))
@@ -601,8 +600,10 @@ function __init__()
         Base.convert(::Type{GeometryTypes.Point},t::MChain{T,V,G}) where {T,V,G} = G == 1 ? GeometryTypes.Point(value(vector(t))) : GeometryTypes.Point(zeros(T,ndims(V))...)
         Base.convert(::Type{GeometryTypes.Point},t::SChain{T,V,G}) where {T,V,G} = G == 1 ? GeometryTypes.Point(value(vector(t))) : GeometryTypes.Point(zeros(T,ndims(V))...)
         GeometryTypes.Point(t::T) where T<:TensorAlgebra = convert(GeometryTypes.Point,t)
-        export points
-        points(f,V=identity;r=-2π:0.0001:2π) = [GeometryTypes.Point(V(Grassmann.vector(f(t)))) for t ∈ r]
+        @pure ptype(::GeometryTypes.Point{N,T} where N) where T = T
+        export points, vectorfield
+        points(f,V=identity;r=-2π:0.0001:2π) = [GeometryTypes.Point(V(vector(f(t)))) for t ∈ r]
+        vectorfield(t,V=vectorspace(t),W=V) = p->GeometryTypes.Point(V(vector(↓(↑((V∪vectorspace(t))(SChain{ptype(p),W,1}(p.data)))⊘t))))
     end
     #@require AbstractPlotting="537997a7-5e4e-5d89-9595-2241ea00577e" nothing
     #@require Makie="ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a" nothing
