@@ -75,9 +75,9 @@ end
     basis"++"
 
     a = v1 + v2
-    @test typeof(a) <: MChain
+    @test typeof(a) <: Chain
 
     @test MultiVector(a) == v1 + v2
-    @test SChain(v) == v
+    @test Chain(v) == v
 end
 end
